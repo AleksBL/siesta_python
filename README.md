@@ -1,5 +1,5 @@
 # siesta_python
-Siesta, transiesta, tbtrans...... without touching the terminal
+Siesta, tbtrans...... without touching the terminal
 
 
 ### But how does it work?
