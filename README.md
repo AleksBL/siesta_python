@@ -44,8 +44,6 @@ Sheet = SiP(cell, pos, species,
 # Write fdf file
 Sheet.fdf()
 Sheet.run_siesta_in_dir()
-
-
 ```
-
+Now you have your electronic structure of the structure we made in the "NitrogenDefectedGraphene" folder, and you can e.g read the Hamiltonian into python using 
 
