@@ -7,9 +7,9 @@ Firstly, its not magic, you need to have siesta, transiesta and tbtrans compiled
 Favorably you can have them in your .bashrc file so that you can just call them as "siesta RUN.fdf > RUN.out", "tbtrans RUN.fdf > RUN.out", but it isnt strictly necessary, as you can also just give the code your paths to the various executables. Just "siesta" and "tbtrans" are however default values. 
 
 ## How to set up a siesta-calculation
-Copy the "siesta_python.py" and "funcs.py" scripts to the folder of your choice, together with a folder with the pseudo-potentials you will use. The pseudo-potentials must be named like this: 'atom'.'type'.psf, eg. for the molybdenum gga pseudo-potential would read Mo.gga.psf or the carbon lda: C.lda.psf. We will later reference this folder in the initialisation of the class contained in 'siesta_python.py'. Now we are set up, as the siesta_python.py script will handle the creation of all the folders.
+Copy the "siesta_python.py" and "funcs.py" scripts to the folder of your choice, together with a folder with the pseudo-potentials you will use. The pseudo-potentials must be named like this: 'atom'.'type'.psf, eg. for the molybdenum gga pseudo-potential would read Mo.gga.psf or the carbon lda: C.lda.psf. We will later reference this folder in the initialisation of the class contained in 'siesta_python.py'.
 
-Before starting, we should have a folder called "pp" with the pseudo-potentials in the same folder you are running the calculation in. You should also be able to run siesta from the terminal using just "siesta RUN.fdf > RUN.out", else you will need to additionally specify the "siesta_exec" keyword in the 
+Before starting, we should have a folder called "pp" with the pseudo-potentials in the same folder you are running the calculation in. You should also be able to run siesta from the terminal using just "siesta RUN.fdf > RUN.out", else you will need to additionally specify the "siesta_exec" keyword in the initialisation below.
 
 
 We can make the atomic structure using [sisl](http://zerothi.github.io/sisl/docs/latest/index.html) (Which can also do a lot of other stuff). Lets make a simple graphene sheet with a nitrogen defect in the middle: 
