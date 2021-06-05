@@ -50,5 +50,9 @@ Sheet = SiP(cell, pos, species,
 Sheet.fdf()
 Sheet.run_siesta_in_dir()
 ```
-Now you have your electronic structure of the structure we made in the "NitrogenDefectedGraphene" folder, and you can e.g read the Hamiltonian into python using  [sisl](http://zerothi.github.io/sisl/docs/latest/index.html).
-
+Now you have your electronic structure of the structure we made in the "NitrogenDefectedGraphene" folder, and you can e.g read the Hamiltonian into python using  [sisl](http://zerothi.github.io/sisl/docs/latest/index.html). See the [sisl](http://zerothi.github.io/sisl/docs/latest/index.html) documentation, it is really easy: 
+```
+#Hamiltonian and overlap matrices gets loaded:
+HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS')
+```
+Which can be used as any other tight-binding model, but has been calculated with DFT!
