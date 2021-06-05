@@ -7,6 +7,8 @@ Firstly, its not magic, you need to have siesta, transiesta and tbtrans compiled
 Favorably you can have them in your .bashrc file so that you can just call them as "siesta RUN.fdf > RUN.out", "tbtrans RUN.fdf > RUN.out", but it isnt strictly necessary, as you can also just give the code your paths to the various executables. Just "siesta" and "tbtrans" are however default values. 
 
 Your folder should look like this:
+Calc.py contains the code that you will see below, pp the pseudo-potentials, and siesta_python.py and funcs.py are the files you see on this webpage.
+
 ![image](https://user-images.githubusercontent.com/75378674/120886643-4925c600-c5ef-11eb-9cd6-d49e1b68314c.png)
 
 
