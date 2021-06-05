@@ -27,16 +27,21 @@ species = Sheet.toASE().numbers
 species[3] = 7
 
 Sheet = SiP(cell, pos, species, 
+            
             #Not necessarily needed keywords below, care with their default values through
             #Some labels for the folder name and calculation name
             directory_name = 'NitrogenDefectedDraphene', sl='NDG', sm = 'NDG',
+            
             # siesta basis, k-point sampling, "mpi" defaults to "mpirun " but we set it to nothing
             # if you do mpirun, remember the space after -> "mpirun " <- because this is what is put into the os.system command
             basis = 'SZP', kp = [3,3,1], mpi = '', 
+            
             # pseudopotential path to folder, defaults to "../pp" path relative to where "siesta_python.py" is put
             pp_path = 'pp',
+            
             # DFT exchange-correlation functional
             xc = 'gga',
+            
             #Overwrites any data in directory_name folder. Defaults to false, but can be True, False and 'reuse'
             overwrite = True, 
             )
