@@ -62,7 +62,5 @@ Now you have your electronic structure of the structure we made in the "Nitrogen
 HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS')
 ```
 Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
-
-
-
+Use at your own resposibility and so on.... BUT:
 ## Write to me if you want something implemented: abalo@dtu.dk
