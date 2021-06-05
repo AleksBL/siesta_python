@@ -55,4 +55,4 @@ Now you have your electronic structure of the structure we made in the "Nitrogen
 #Hamiltonian and overlap matrices gets loaded:
 HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS')
 ```
-Which can be used as any other tight-binding model, but has been calculated with DFT!
+Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
