@@ -65,6 +65,10 @@ Now you have your electronic structure of the structure we made in the "Nitrogen
 HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS').read_hamiltonian()
 ```
 Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
+
+I you look carefully in the folders, there are five files: KP.fdf, STRUCT.fdf, DEFAULT.fdf, TS_TBT.fdf and RUN.fdf -  these are the files written by the self.fdf function. In the funcs.py script the templates for these files are, and you can add your own attributes it should write by adding them in the SiP class and making it write it in funcs.py
+
+
 # TranSiesta Transport calculation
 Here we go through a [sisl tutorial](https://github.com/zerothi/ts-tbt-sisl-tutorial), using just python. We do a four-terminal calculation on a system consisting of two crossing 1D chains of carbon atoms. The way to build two-electrode systems is completely analogous. Lets start:
 ### The electrodes, built simply with sisl
