@@ -29,7 +29,7 @@ Sheet = sisl.geom.graphene(orthogonal = True).tile(2,0).tile(2,1)
 pos = Sheet.xyz
 cell = Sheet.cell
 species = Sheet.toASE().numbers
-#make fourth atom nitrogen, (all atomic species up to Barium written into this program)
+#make fourth atom nitrogen, (all atomic species up to Barium written into this program, else: go to funcs.py and add your element in Num2Sym)
 species[3] = 7
 
 Sheet = SiP(cell, pos, species, 
