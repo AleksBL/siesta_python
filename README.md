@@ -39,7 +39,7 @@ Sheet = SiP(cell, pos, species,
             # pseudopotential path to folder, defaults to "../pp" path relative to where "siesta_python.py" is put
             pp_path = 'pp',
             
-            # DFT exchange-correlation functional
+            # DFT exchange-correlation functional, defaults to 'gga'
             xc = 'gga',
             
             #Overwrites any data in directory_name folder. Defaults to false, but can be True, False and 'reuse'
@@ -56,3 +56,7 @@ Now you have your electronic structure of the structure we made in the "Nitrogen
 HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS')
 ```
 Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
+
+
+
+## Write to me if you want something implemented: abalo@dtu.dk
