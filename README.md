@@ -34,7 +34,7 @@ species[3] = 7
 
 Sheet = SiP(cell, pos, species, 
             
-            #Not necessarily needed keywords below, care with their default values through
+            #Not necessarily needed keywords below, care with their default values though
             #Some labels for the folder name and calculation name
             directory_name = 'NitrogenDefectedDraphene', sl='NDG', sm = 'NDG',
             
