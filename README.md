@@ -21,7 +21,7 @@ Copy the "siesta_python.py" and "funcs.py" scripts to the folder of your choice,
 Before starting, we should have a folder called "pp" with the pseudo-potentials in the same folder you are running the calculation in. You should also be able to run siesta from the terminal using just "siesta RUN.fdf > RUN.out", else you will need to additionally specify the "siesta_exec" keyword in the initialisation below.
 
 
-We can make the atomic structure using [sisl](http://zerothi.github.io/sisl/docs/latest/index.html) (Which can also do a lot of other stuff). Lets make a simple graphene sheet with a nitrogen defect in the middle: 
+We can make the atomic structure using [sisl](http://zerothi.github.io/sisl/docs/latest/index.html) (Which can also do a lot of other stuff, take a look). Lets make a simple graphene sheet with a nitrogen defect in the middle: 
 ```
 import numpy as np
 from siesta_python import SiP
