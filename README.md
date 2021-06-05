@@ -66,7 +66,7 @@ HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS').read_hamiltonian()
 ```
 Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
 # TranSiesta Transport calculation
-Here we go through a sisl tutorial, but using just python calls. We do a four-terminal calculation on a system consisting of two crossing 1D chains of carbon atoms. The way to build two-electrode systems is completely analogous. Lets start:
+Here we go through a sisl tutorial, but using just python. We do a four-terminal calculation on a system consisting of two crossing 1D chains of carbon atoms. The way to build two-electrode systems is completely analogous. Lets start:
 ### The electrodes, built simply with sisl
 ```
 import numpy as np
