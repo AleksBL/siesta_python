@@ -128,7 +128,7 @@ EPY = SiP(epy.cell, epy.xyz, epy.toASE().numbers,
 elecs = [EMX, EPX, EMY, EPY]
 for e in elecs: e.fdf(); e.run_siesta_in_dir()
 ```
-Now, we build the Scattering region calculation:
+Now, we build the Scattering region calculation and use the methods "self.find_elec_inds", and "self.set_buffer_atoms(func)" to get the relevant indecies for the electrodes and buffer atoms
 ``` 
 def buffer_atoms(x):
     if (x[0:2] <  2.5).any() or (x[0:2] > 20).any():
@@ -147,6 +147,47 @@ Dev = SiP(device.cell, device.xyz, device.toASE().numbers,
 
 Dev.find_elec_inds(tol = 1e-2)
 Dev.set_buffer_atoms(buffer_atoms)
+```
+Next, we write the required fdf file, run the Analyze step, which writes the minimum memory pivotting scheme to the TS_TBT.fdf file, and run TranSiesta & tbtrans:
+
+```
+Dev.fdf()
+Dev.write_more_fdf(['TS.Hartree.Fix +A'], name = 'TS_TBT')
+Dev.run_analyze_in_dir()
+Dev.run_siesta_in_dir()
+Dev.run_tbtrans_dir(DOS_GF = True)
+```
+The above is a equillibrium calculation. We can use the density matrix from this calculation to make a bias calculation.  This is done by using the "self.copy_DM_from" method: 
+```
+
+Dev2 = SiP(device.cell, device.xyz, device.toASE().numbers,
+          pp_path = 'pp', 
+          mpi = '',
+          directory_name = 'Device2', solution_method = 'transiesta',
+          kp = [3,3,1], overwrite = True,
+          kp_tbtrans = [1,50,1],
+          elecs = elecs, 
+          reuse_dm = True, # <<----- We give the code the flag to reuse 
+                           #         a density matrix, this we will copy 
+                           #         from the previous Dev-calculation
+          Voltage = 2 * 0.26,  Chem_Pot = [0.26, 0.24, -0.26, -0.24],
+          NEGF_calc = True)
+
+Dev2.find_elec_inds(tol = 1e-2)
+Dev2.set_buffer_atoms(buffer_atoms)
+Dev2.fdf()
+Dev2.write_more_fdf(['TS.Hartree.Fix +A'], name = 'TS_TBT')
+
+Dev2.copy_DM_from(Dev) # <<------- Copying density matrix from the previous calculator object 
+
+Dev2.run_analyze_in_dir()
+Dev2.run_siesta_in_dir()
+Dev2.run_tbtrans_dir(DOS_GF = True)
+```
+Yet again we can use sisl to read the transmission function:
+``´
+t = sisl.get_sile(Dev2.dir + '/siesta.TBT.nc')
+plt.plot(t.E,t.transmission(0,2))
 ```
 
 
