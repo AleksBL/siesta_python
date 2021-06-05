@@ -185,7 +185,7 @@ Dev2.run_siesta_in_dir()
 Dev2.run_tbtrans_dir(DOS_GF = True)
 ```
 Yet again we can use sisl to read the transmission function:
-``´
+```
 t = sisl.get_sile(Dev2.dir + '/siesta.TBT.nc')
 plt.plot(t.E,t.transmission(0,2))
 ```
