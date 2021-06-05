@@ -1,6 +1,9 @@
 # siesta_python
 Siesta, tbtrans...... without touching the terminal
 
+Use at your own resposibility and so on.... BUT:
+## Write to me if you want something implemented: abalo@dtu.dk
+
 
 ### But how does it work?
 Firstly, its not magic, you need to have siesta, transiesta and tbtrans compiled on your computer and you need to know their paths.
@@ -62,7 +65,3 @@ Now you have your electronic structure of the structure we made in the "Nitrogen
 HS = sisl.get_sile(Sheet.dir + '/' + Sheet.sl + '.TSHS')
 ```
 Which can be used as any other tight-binding model, but has been calculated with the Siesta-method!
-
-
-Use at your own resposibility and so on.... BUT:
-## Write to me if you want something implemented: abalo@dtu.dk
