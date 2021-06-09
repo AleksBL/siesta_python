@@ -159,7 +159,7 @@ Dev.fdf()
 Dev.write_more_fdf(['TS.Hartree.Fix +A'], name = 'TS_TBT')
 Dev.run_analyze_in_dir()
 Dev.run_siesta_in_dir()
-Dev.run_tbtrans_dir(DOS_GF = True)
+Dev.run_tbtrans_in_dir(DOS_GF = True)
 ```
 The above is a equillibrium calculation. We can use the density matrix from this calculation to make a bias calculation.  This is done by using the "self.copy_DM_from" method: 
 ```
@@ -293,7 +293,7 @@ Dev.write_more_fdf(['TS.Hartree.Fix -A'], name = 'TS_TBT')
 
 Dev.run_analyze_in_dir()
 Dev.run_siesta_in_dir()
-Dev.run_tbtrans_dir()
+Dev.run_tbtrans_in_dir()
 
 H   = sisl.get_sile(Dev.dir + '/siesta.TSHS').read_hamiltonian()
 S   = sisl.get_sile(Dev.dir + '/siesta.TSHS').read_overlap()
