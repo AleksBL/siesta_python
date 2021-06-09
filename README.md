@@ -193,6 +193,8 @@ Yet again we can use sisl to read the transmission function:
 t = sisl.get_sile(Dev2.dir + '/siesta.TBT.nc')
 plt.plot(t.E,t.transmission(0,2))
 ```
+## Getting the Green's function of the system from the TranSiesta Calculation, using the Transport_DCAC and Block_matrices code:
+
 
 
 
