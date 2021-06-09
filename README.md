@@ -194,7 +194,9 @@ t = sisl.get_sile(Dev2.dir + '/siesta.TBT.nc')
 plt.plot(t.E,t.transmission(0,2))
 ```
 ## Getting the Green's function of the system from the TranSiesta Calculation:
-Here we use the Transport_DCAC code, which also  relies in the Block_matrices code:
+Here we use the Transport_DCAC code, which also  relies in the Block_matrices code. Your Folder should look something like this if you have downloaded the various codes from the different repositories:
+![image](https://user-images.githubusercontent.com/75378674/121400029-5c21f880-c957-11eb-8f51-101a1264ba9b.png)
+
 We do the same steps as previously and do a four-terminal calculation:
 
 ```
