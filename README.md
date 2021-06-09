@@ -345,6 +345,6 @@ plt.plot(tbt.E, tbt.transmission(0,2))
 plt.plot(Eg, Transmission)
 
 ```
-
+Try to write G = iG.Invert(BW = '*\*2'),  with the "2" added and run the last above block again
 
 
