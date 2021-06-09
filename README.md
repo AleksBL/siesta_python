@@ -193,8 +193,156 @@ Yet again we can use sisl to read the transmission function:
 t = sisl.get_sile(Dev2.dir + '/siesta.TBT.nc')
 plt.plot(t.E,t.transmission(0,2))
 ```
-## Getting the Green's function of the system from the TranSiesta Calculation, using the Transport_DCAC and Block_matrices code:
+## Getting the Green's function of the system from the TranSiesta Calculation:
+Here we use the Transport_DCAC, which also  relies in the Block_matrices code:
+We do the same steps as previously and do a four-terminal calculation:
 
+```
+
+import numpy as np
+from siesta_python import SiP
+from Transport_DCAC import System
+import sisl
+import matplotlib.pyplot as plt
+
+chain = sisl.Geometry([[0,0,0]], atoms=sisl.Atom[6], sc=[1.4, 1.4, 11])
+
+elec_x = chain.tile(4, axis=0).add_vacuum(11 - 1.4, 1)
+elec_y = chain.tile(4, axis=1).add_vacuum(11 - 1.4, 0)
+
+chain_x = elec_x.tile(12, axis=0)
+chain_y = elec_y.tile(12, axis=1)
+
+chain_x = chain_x.translate(-chain_x.center(what='xyz'))
+chain_y = chain_y.translate(-chain_y.center(what='xyz'))
+
+device = chain_x.append(chain_y.translate([0, 0, -chain.cell[2, 2] + 2.1]), 2)
+# Correct the y-direction vacuum
+device = device.add_vacuum(chain_y.cell[1, 1] - chain_x.cell[1,1], 1)
+device = device.translate(device.center(what='cell'))
+
+emx = elec_x.move( device.xyz[np.where(device.xyz[:,0] == device.xyz[:,0].min()),:][0][0]  + 2 * chain.cell[0,:])
+epx = elec_x.move( device.xyz[np.where(device.xyz[:,0] == device.xyz[:,0].max()),:][0][0]  - 5 * chain.cell[0,:])
+emy = elec_y.move( device.xyz[np.where(device.xyz[:,1] == device.xyz[:,1].min()),:][0][0]  + 2 * chain.cell[1,:])
+epy = elec_y.move( device.xyz[np.where(device.xyz[:,1] == device.xyz[:,1].max()),:][0][0]  - 5 * chain.cell[1,:])
+
+EMX = SiP(emx.cell, emx.xyz, emx.toASE().numbers,
+          #mpi = '', #<-- single process, delete this line / write 'mpirun ' if you want to use mpirun
+          directory_name = 'EMX', sl = 'EMX', sm = 'EMX', basis = 'SZ',
+          kp = [50,1,1], semi_inf = '-a1', overwrite = True,
+          pp_path = 'pp'
+          )
+
+EPX = SiP(epx.cell, epx.xyz, epx.toASE().numbers,
+          #mpi = '',
+          directory_name = 'EPX', sl = 'EPX', sm = 'EPX', basis = 'SZ',
+          kp = [50,1,1], semi_inf = '+a1', overwrite = True,
+          pp_path = 'pp'
+          )
+
+EMY = SiP(emy.cell, emy.xyz, emy.toASE().numbers,
+          #mpi = '',
+          directory_name = 'EMY', sl = 'EMY', sm = 'EMX',basis = 'SZ',
+          kp = [1,50,1], semi_inf = '-a2',  overwrite = True,
+          pp_path = 'pp'
+          )
+
+EPY = SiP(epy.cell, epy.xyz, epy.toASE().numbers,
+          #mpi = '',
+          directory_name = 'EPY', sl = 'EPY', sm = 'EPY',basis = 'SZ',
+          kp = [1,50,1], semi_inf = '+a2',  overwrite = True,
+          pp_path = 'pp'
+          )
+
+elecs = [EMX, EPX, EMY, EPY]
+for e in elecs: e.fdf(); e.run_siesta_in_dir()
+E = []
+for e in elecs:
+    h = sisl.get_sile(e.dir + '/' + e.sl + '.TSHS').read_hamiltonian()
+    s = sisl.get_sile(e.dir + '/' + e.sl + '.TSHS').read_overlap()
+    h.set_nsc((3,3,1))
+    s.set_nsc((3,3,1))
+    
+    E += [{'H': h, 'S':s}]
+    print(h.nsc, s.nsc)
+
+def buffer_atoms(x):
+    if (x[0:2] <  2.5).any() or (x[0:2] > 64).any():
+        return True
+    return False
+
+Dev = SiP(device.cell, device.xyz, device.toASE().numbers,
+          pp_path = 'pp', 
+          #mpi = '',
+          directory_name = 'Device', solution_method = 'transiesta',
+          kp = [1,1,1], overwrite = True,
+          kp_tbtrans = [1,50,1],
+          basis = 'SZ',
+          trans_emin = -0.5, trans_emax = 0.5, trans_delta = 0.05,
+          elecs = elecs, 
+          Voltage = 0.0,  Chem_Pot = [0.0, 0.0, 0.0, 0.0]
+          )
+
+
+Dev.find_elec_inds(tol = 1e-2)
+Dev.set_buffer_atoms(buffer_atoms)
+Dev.fdf()
+Dev.write_more_fdf(['TS.Hartree.Fix -A'], name = 'TS_TBT')
+
+Dev.run_analyze_in_dir()
+Dev.run_siesta_in_dir()
+Dev.run_tbtrans_dir()
+
+H   = sisl.get_sile(Dev.dir + '/siesta.TSHS').read_hamiltonian()
+S   = sisl.get_sile(Dev.dir + '/siesta.TSHS').read_overlap()
+H.set_nsc((3,3,1))
+S.set_nsc((3,3,1))
+
+D = {'H': H, 'S':S}
+```
+
+
+Hopefully, the above code finishes. If you read through, we have taken out the device and electrode Hamiltonians and overlaps in the "D" and "E" dictionaries. TBtrans furthermore makes the bandwidth of the inverse Greens function smaller. We read this information:
+```
+tbt = sisl.get_sile(Dev.dir + '/siesta.TBT.nc')
+btd = tbt.btd().copy()
+pivot = tbt.pivot().copy()
+```
+Here we have the information on how to permute the columns and rows of the inverse Greens function to make the sparsity pattern favorable in "btd" and furthermore we have how to permute the columns and rows in "pivot". We now set up the inverse Greens function and the Gamma matrices:
+
+```
+
+Calc = System(D, E, Dev.elec_inds, Eg, 0.0, Eg[1]- Eg[0], buffer_inds = Dev.buffer_atoms, pivot = pivot, eta = 1e-2)
+
+Calc.Set_kp([None]); nk = 1 # "1" k-point
+Calc.Organise_and_Check()
+Calc.Gen_SE_decimation(dirs = [(-1,0), (1,0), (0,-1), (0,1)])
+P = [0]; 
+for b in btd: P += [P[-1] + b]
+Calc.Block_Setup_decimation( P = P )
+
+iG  = Calc.iGreens
+Gammas = Calc.Gammas
+Gl = Gammas[0]
+Gr = Gammas[2]
+```
+### Inspect Gammas and their "self.is_zero" block matrix, where their nonzero blocks are set to 1
+```
+G = iG.Invert(BW = '*\*')
+
+M1 = Gl.BDot(G)
+G.do_dag()
+M2 = Gr.BDot(G)
+G.do_dag()
+
+
+##Tr(Gl * G * Gr * G^T*)
+Transmission = M1.TrProd(M2).sum(axis=0)/nk
+
+plt.plot(tbt.E, tbt.transmission(0,2))
+plt.plot(Eg, Transmission)
+
+```
 
 
 
