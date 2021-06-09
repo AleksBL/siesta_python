@@ -349,6 +349,6 @@ Try to write
 ```
 G = iG.Invert(BW = '*\*2')
 ```
-,  with the "2" added and run the last above block again
+,  with the "2" added and run the last above block again. Inspect the Blocks of the Greens function with the G.is_zero array
 
 
