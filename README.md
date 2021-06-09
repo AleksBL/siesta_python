@@ -311,7 +311,7 @@ pivot = tbt.pivot().copy()
 Here we have the information on how to permute the columns and rows of the inverse Greens function to make the sparsity pattern favorable in "btd" and furthermore we have how to permute the columns and rows in "pivot". We now set up the inverse Greens function and the Gamma matrices:
 
 ```
-
+Eg = np.linspace(-0.5, 0.5, 100)
 Calc = System(D, E, Dev.elec_inds, Eg, 0.0, Eg[1]- Eg[0], buffer_inds = Dev.buffer_atoms, pivot = pivot, eta = 1e-2)
 
 Calc.Set_kp([None]); nk = 1 # "1" k-point
