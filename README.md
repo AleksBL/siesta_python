@@ -71,6 +71,7 @@ I you look carefully in the folders, there are five files: KP.fdf, STRUCT.fdf, D
 
 
 # TranSiesta Transport calculation
+You should always be careful with the default values and check the fdf files for yourself. 
 Here we go through a [sisl tutorial](https://github.com/zerothi/ts-tbt-sisl-tutorial), using just python. We do a four-terminal calculation on a system consisting of two crossing 1D chains of carbon atoms. The way to build two-electrode systems is completely analogous. Lets start:
 ### The electrodes, built simply with sisl
 ```
