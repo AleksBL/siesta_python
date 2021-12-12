@@ -1,18 +1,18 @@
 import numpy as np
 import os
+import sys
 import sisl
 import spglib as spg
 import seekpath
 from time import time
-from funcs.funcs import unique_list, Num2Sym,read_analyze,write_fdf,write_gin, read_geom_from_fdf
-from funcs.funcs import read_gulp_results,read_total_energy, write_relax_fdf, read_siesta_relax, Mulliken, Identity
-from funcs.funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
-from funcs.funcs import write_mpr
-
+sys.path.append(__file__[:-16])
+from funcs import unique_list, Num2Sym,read_analyze,write_fdf,write_gin, read_geom_from_fdf
+from funcs import read_gulp_results,read_total_energy, write_relax_fdf, read_siesta_relax, Mulliken, Identity
+from funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
+from funcs import write_mpr
 from subprocess import Popen
 from datetime import datetime
 # from Gf_experimental import Greens_function, read_SE_from_tbtrans
-
 terminal = os.system; rem = os.remove; ld = os.listdir
 wd = os.getcwd()
 
@@ -361,14 +361,13 @@ class SiP:
     def barebone_fdf(self, eta = 0.0):
         barebones_RUN(self, eta = eta)
     
-    def fdf(self, eta = 0.0, manual_pp = []):
+    def fdf(self, eta = 0.0, manual_pp = [], fix_hartree = True):
         write_fdf(self, eta = eta)
         if self.Voltage is None:
             pass
-        elif self.Voltage!=0:#  or self.non_ortho==True:
+        elif self.Voltage!=0 and fix_hartree:#  or self.non_ortho==True:
             self.write_more_fdf(['TS.Hartree.Fix -A'])
         self.get_pseudo_paths(manual = manual_pp)
-        
         
         if self.dic != None:
             keys = self.dic.keys()
