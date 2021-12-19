@@ -8,13 +8,11 @@ Use at your own resposibility and so on.... BUT:
 ### But how does it work?
 Firstly, its not magic, you need to have [SIESTA](https://github.com/siesta-project), TranSiesta and tbtrans compiled on your computer and you need to know their paths that you would otherwise execute them through.
 
-Favorably you can have them in your .bashrc file so that you can just call them as "siesta RUN.fdf > RUN.out", "tbtrans RUN.fdf > RUN.out", but it isnt strictly necessary, as you can also just give the code your paths to the various executables. Just "siesta" and "tbtrans" are however default values. 
+Favorably you can have them in your .bashrc file so that you can just call them as "siesta RUN.fdf > RUN.out", "tbtrans RUN.fdf > RUN.out", but it isnt strictly necessary, as you can also just give the code your paths to the various executables. Just "siesta" and "tbtrans" are however default values.
 
-Your folder should look like this:
-Calc.py contains the code that you will see below, pp the pseudo-potentials, and siesta_python.py and funcs.py are the files you see on this webpage.
 
-![image](https://user-images.githubusercontent.com/75378674/120886643-4925c600-c5ef-11eb-9cd6-d49e1b68314c.png)
-
+#### Installation
+Download the code and extract to a folder of your choice. Then do a pip install -e . in the folder where the setup.py is located. 
 
 ## How to set up a siesta-calculation
 Copy the "siesta_python.py" and "funcs.py" scripts to the folder of your choice, together with a folder with the pseudo-potentials you will use. The pseudo-potentials must be named like this: 'atom'.'type'.psf, eg. for the molybdenum gga pseudo-potential would read Mo.gga.psf or the carbon lda: C.lda.psf. We will later reference this folder in the initialisation of the class contained in 'siesta_python.py'. http://nninc.cnf.cornell.edu/ is a place you can find pseudo-potentials for SIESTA
