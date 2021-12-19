@@ -146,7 +146,7 @@ Dev = SiP(device.cell, device.xyz, device.toASE().numbers,
           kp = [3,3,1], overwrite = True,
           kp_tbtrans = [1,50,1],
           elecs = elecs, 
-          Voltage = 0.0,  Chem_Pot = [0.0, 0.0, 0.0, 0.0]
+          Chem_Pot = [0.0, 0.0, 0.0, 0.0]
           )
 
 Dev.find_elec_inds(tol = 1e-2)
