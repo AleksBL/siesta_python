@@ -1231,9 +1231,6 @@ def barebones_RUN(object,eta = 1e-2):
             f.write('%endblock TBT.Elec.'+ dummy_names[i] + '\n')
             
 
-
-
-
 def diff_central(x, y):
     x0 = x[:-2]
     x1 = x[1:-1]

@@ -30,12 +30,6 @@ mix_ps = 'mixps '
 
 if os.uname().nodename == 'aleksander-HP-EliteBook-840-G6':
     M = ''
-#     sp = '/home/aleks/siesta-4.1.5/Obj/'+sp
-#     tb_trans_exec = '/home/aleks/siesta-4.1.5/Util/TS/TBtrans/'+tb_trans_exec
-#     B = '/home/aleks/siesta-4.1.5/Util/Bands/'+B
-#     pdos_exec='/home/aleks/siesta-4.1.5/Util/Contrib/APostnikov/'+pdos_exec
-#     gulp_path='/home/aleks/gulp-5.2/Src/'+gulp_path
-#     gen_basis='/home/aleks/siesta-4.1.5/Util/Gen-basis/'+gen_basis
 
 # elif os.uname().nodename == 'indsæt_pc_navn_og_paths_hvis ikke 15-21 passer':
 #     ########### PATHs ###############
@@ -657,6 +651,7 @@ class SiP:
                 os.system('eigfat2plot ' + f +' > ' + name + '.dat')
         
         os.chdir('..')
+    
     def custom_bandlines(self, path):
         self.delete_fdf('KP')
         self.write_more_fdf(['%block kgrid.MonkhorstPack\n',
@@ -673,9 +668,6 @@ class SiP:
         self.write_more_fdf(['%endblock BandLines'],
                             name = 'KP')
         
-        
-        
-    
     
     def run_tbtrans_in_dir(self,DOS_GF= False, DOS_A=False, DOS_A_ALL=False,ORBITAL_CURRENT=False, Custom = [],
                            use_subprocess = False, wait = True):
@@ -1580,10 +1572,15 @@ class SiP:
         
         return B, geom
     
+    def ase_visualise(self):
+        from ase.visualize import view
+        view(self.to_sisl().toASE())
     
-    
-    def run_RSSE_calc(self, Contour, tile, a1 = 0,a2 = 1, eta = 0.0, fix_dir = 'A', buffer_cond = None):
+    def run_TS_RSSE_calc(self, tile, tbt_contour, a1 = 0,a2 = 1, eta = 0.0, Contour = None, fix_dir = 'C', buffer_cond = None):
         elec_rsse_idx = [i for i in range(len(self.elecs)) if self.elecs[i].elec_RSSE]
+        if Contour is None:
+            Contour = np.linspace(-1,1,45)+1j*0.01
+        self.custom_tbtrans_contour = tbt_contour
         for i,e in enumerate(self.elecs):
             e.fdf()
             e.run_siesta_electrode_in_dir()
@@ -1594,14 +1591,20 @@ class SiP:
             self.set_buffer_atoms(buffer_cond)
         self.fdf()
         self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
-        #self.run_analyze_in_dir()
         self.run_siesta_in_dir()
-    
-            
         
-    
-    
-    
-
-
-
+        TS_Contour = self.get_contour_from_failed_RSSE()
+        TS_Contour = TS_Contour[:,0] + 1j * TS_Contour[:,1]
+        for i,e in enumerate(self.elecs):
+            e.fdf()
+            e.run_siesta_electrode_in_dir()
+            if i in elec_rsse_idx:
+                e.Real_space_SE(a1,a2,tile, 0.0, -0, 0, 2/50, Contour = TS_Contour)
+        
+        self.fdf()
+        self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
+        self.run_siesta_in_dir()
+        self.run_tbtrans_in_dir()
+        
+        
+        
