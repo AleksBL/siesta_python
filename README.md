@@ -23,7 +23,7 @@ Before starting, we should have a folder called "pp" with the pseudo-potentials 
 We can make the atomic structure using [sisl](http://zerothi.github.io/sisl/docs/latest/index.html) (Which can also do a lot of other stuff, take a look). Lets make a simple graphene sheet with a nitrogen defect in the middle: 
 ```
 import numpy as np
-from siesta_python import SiP
+from siesta_python.siesta_python import SiP
 import sisl
 
 Sheet = sisl.geom.graphene(orthogonal = True).tile(2,0).tile(2,1)
@@ -74,7 +74,7 @@ Here we go through a [sisl tutorial](https://github.com/zerothi/ts-tbt-sisl-tuto
 ### The electrodes, built simply with sisl
 ```
 import numpy as np
-from siesta_python import SiP
+from siesta_python.siesta_python import SiP
 import sisl
 import matplotlib.pyplot as plt
 
@@ -202,7 +202,7 @@ We do the same steps as previously and do a four-terminal calculation:
 ```
 
 import numpy as np
-from siesta_python import SiP
+from siesta_python.siesta_python import SiP
 from Transport_DCAC import System
 import sisl
 import matplotlib.pyplot as plt
