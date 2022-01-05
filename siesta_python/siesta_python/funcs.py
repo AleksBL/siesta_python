@@ -839,7 +839,6 @@ def read_siesta_relax(fname):
     lattice = np.array(lattice)
     return pos, lattice
 
-    
 def numpy_inds_to_string(i_in):
     out = []
     inds = sorted(list(i_in.copy()))
@@ -868,8 +867,6 @@ def numpy_inds_to_string(i_in):
                 IN=True
         if IN == False:
             out+=[temp]
-    
-    # return out    
     
     for i in range(len(out)):
         
@@ -954,12 +951,14 @@ def get_random_from_name(name,done_list, return_name = False):
     f = None
     while f is None:
         angles = os.listdir(name)
-        r1 = np.random.randint(len(angles))
-        angle = angles[r1]
-        cells = os.listdir(name + '/'+angle)
-        f = cells[np.random.randint(len(cells))]
-        if f in done_list:
-            f = None
+        if len(angles)>0:
+            r1 = np.random.randint(len(angles))
+            angle = angles[r1]
+            cells = os.listdir(name + '/'+angle)
+            if len(cells)>0:
+                f = cells[np.random.randint(len(cells))]
+                if f in done_list:
+                    f = None
     
     tal = f.replace(',', ' ').replace('[' ,' ').replace(']' ,' ').replace('_', ' ').replace('(', ' ').replace(')', ' ').split()
     
