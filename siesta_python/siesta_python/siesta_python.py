@@ -1,39 +1,39 @@
 import numpy as np
-import os
-import sys
-import sisl
+import os, sys, sisl,seekpath
 import spglib as spg
-import seekpath
 from time import time
 sys.path.append(__file__[:-16])
 from funcs import unique_list, Num2Sym,read_analyze,write_fdf,write_gin, read_geom_from_fdf
-from funcs import read_gulp_results,read_total_energy, write_relax_fdf, read_siesta_relax, Mulliken, Identity
+from funcs import read_gulp_results,read_total_energy, read_fermi_level, write_relax_fdf, read_siesta_relax, Mulliken, Identity
 from funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
 from funcs import write_mpr
 from subprocess import Popen
 from datetime import datetime
-# from Gf_experimental import Greens_function, read_SE_from_tbtrans
+from config import GfModule_extension
+
+if GfModule_extension:
+    from Gf_Module.Gf import read_SE_from_tbtrans
+
 terminal = os.system; rem = os.remove; ld = os.listdir
 wd = os.getcwd()
 
 PP_path = '../pp'
 #put siesta and tbtrans in path....#
-M = 'mpirun '
-sp = 'siesta '
-tb_trans_exec='tbtrans '
-B = 'gnubands '
-pdos_exec='fmpdos'
-gulp_path='gulp '
-gen_basis='gen-basis '
-mix_ps = 'mixps '
+M             = 'mpirun '
+sp            = 'siesta '
+tb_trans_exec = 'tbtrans '
+B             = 'gnubands '
+pdos_exec     = 'fmpdos'
+gulp_path     = 'gulp '
+gen_basis     = 'gen-basis '
+mix_ps        = 'mixps '
+joblib_backend= 'multiprocessing'
+
+
 
 
 if os.uname().nodename == 'aleksander-HP-EliteBook-840-G6':
     M = ''
-
-# elif os.uname().nodename == 'indsæt_pc_navn_og_paths_hvis ikke 15-21 passer':
-#     ########### PATHs ###############
-#     pass
 
 def error():
     print('Error in siesta_python')
@@ -66,24 +66,25 @@ no_rem = ['siesta_python.py',
 
 class SiP:
     ######"Siesta in Python"#####
-    def __init__(self,lat,pos,s,
+    def __init__(self,lat,pos,s, # lat: (3,3) np array, pos:(n_at,3) np.array, s (n_at,) np array of integers
                  directory_name='noname',
                  sm = 'siesta',
                  sl = 'siesta',
                  spin_pol = 'non-polarized',
-                 energy_shift = None,
-                 dm_mixing_weight = None,
-                 number_pulay = None,
+                 energy_shift = None,      
+                 dm_mixing_weight = None, # Mixer Opts
+                 number_pulay = None,     # Mixer Opts
                  dm_tol = '1.d-4',
-                 xc     = 'gga',
+                 xc     = 'GGA',
+                 xc_authors='PBE',
                  basis  = 'SZP',
                  mesh_cutoff = 150,
                  max_scf_it  = 300, 
                  kgridcutoff = None,
                  solution_method = 'diagon',
                  electronic_temperature_mev = 25,
-                 calc_bands = False,
-                 kp         = None,
+                 calc_bands = False,              # Calculate band structure in sisl instead
+                 kp         = [1,1,1],
                  k_shift    = 0.0,
                  TwoDim     = True,
                  write_matrices = True,
@@ -97,37 +98,41 @@ class SiP:
                  Gulp_exec=gulp_path,
                  Bands_plot = B,
                  mix_ps = mix_ps,
-                 Standardize_cell=False,
-                 elec_inds  = None,
-                 print_console = False,
-                 Chem_Pot   = None,
-                 semi_inf   = None,
-                 elecs      = [],
-                 buffer_atoms = [],
-                 Device_atoms = [],
-                 kp_tbtrans = None,
-                 save_EP    = False,
-                 trans_emin = -1,
-                 trans_emax =  1,
-                 trans_delta= 0.02,
-                 custom_tbtrans_contour = None,
-                 NEGF_calc  = False,
-                 reuse_dm   = False,
-                 set_pdos   = None,
-                 save_es    = False,
-                 overwrite  = True,
-                 mixer      = 'Pulay',
-                 n_hist     = 8,
-                 elec_bloch = None,
-                 mix_what   = 'Hamiltonian',
-                 elec_RSSE  = False,
-                 save_SE    = False,
-                 save_SE_only = False,
-                 lua_script = None,
-                 dictionary = None,
-                 skip_distance_check = False,
-                 print_mulliken = True,
-                 denchar_files = False,
+                 Standardize_cell=False,        # standardizes cell to seekpath convention
+                 elec_inds  = None,             # set here or use method find_elec_inds
+                 print_console = False,         # you want to all the printing?
+                 Chem_Pot   = None,             # list of floats (2 elecs: [.0, .0])
+                 semi_inf   = None,             # '+a1', '-a1' etc
+                 elecs      = [],               # If solution_method is transiesta, you'll need to supply some electrodes
+                 buffer_atoms = [],             # set here or use the method set_buffer_atoms
+                 Device_atoms = [],             # ???
+                 kp_tbtrans = [1,1,1],          # 
+                 #save_EP    = False,           # ???
+                 save_potentials=False,         # VT and VH
+                 trans_emin = -1,               # Values for tbtrans transport calculation
+                 trans_emax =  1,               #
+                 trans_delta= 0.02,             # 
+                 custom_tbtrans_contour = None, # supply a custom tbtrans contour (n_E,) np array
+                 NEGF_calc  = False,            # toggle non-equilibrium flags in fdf files. Autoset when Chem_Pot!=0
+                 reuse_dm   = False,            # Reuse siesta.DM / siesta.TSDE file
+                 set_pdos   = None,             # ???
+                 #save_es    = False,            # ???
+                 overwrite  = True,             # True, False, 'reuse', overwrite directory folder?
+                 mixer      = 'Pulay',          # SCF mixer, see siesta manual
+                 n_hist     = 8,                # history for mixer, see siesta manual
+                 elec_bloch = None,             # bloch tiling of electrode, see siesta/tbtrans manual
+                 mix_what   = 'Hamiltonian',    # 'Hamiltonian', 'Density', 'Charge', see transiesta manual
+                 elec_RSSE  = False,            # Electrode is real space electrode? 
+                 elec_SurRSSE = False,          # Electrode is semi-infinite real space electrode?
+                 save_SE    = False,            # write *TBT_SE.nc files?
+                 save_SE_only = False,          # do nothing else but calculate SE?
+                 lua_script = None,             # does nothing yet
+                 dictionary = None,             # ???
+                 skip_distance_check = False,   # Code checks distances between atoms, can be lengthy for big systems
+                 skip_spg_sp = False,           # spacegroup of system, --||--
+                 print_mulliken = False,        # mulliken in out file?
+                 denchar_files = False,         # 
+                 contour_settings=None,         # Custom transiesta contour (dictionary). See siesta_python.funcs for implementation.
                  
                  ):
         
@@ -177,16 +182,20 @@ class SiP:
                 print('Couldnt read STRUCT.fdf, stopping')
                 assert 1 == 0
             if 'siesta.TBT.nc' in ld(directory_name):
-                os.system('cp ' + directory_name + '/siesta.TBT.nc '  + directory_name + '/old_siesta.TBT.nc ')
-        
+                os.system('mv ' + directory_name + '/siesta.TBT.nc '  + directory_name + '/old_siesta.TBT.nc ')
+            if 'siesta.TBT_UP.nc' in ld(directory_name):
+                os.system('mv ' + directory_name + '/siesta.TBT_UP.nc '  + directory_name + '/old_siesta.TBT_UP.nc ')
+            if 'siesta.TBT_DN.nc' in ld(directory_name):
+                os.system('mv ' + directory_name + '/siesta.TBT_DN.nc '  + directory_name + '/old_siesta.TBT_DN.nc ')
+            
         ###### Initialize all the stuff neeeded to write a siesta .fdf file. 
         self.dir=directory_name
         self.Standardize_cell = Standardize_cell
-        self.xc    = xc
+        self.xc_authors = xc_authors
+        self.xc               = xc
+        self.skip_spg_sp = skip_spg_sp
         
-        print( ' set struct')
         self.set_struct(lat, pos, s)
-        print('done')
         
         self.sm               = sm
         self.sl               = sl
@@ -195,7 +204,6 @@ class SiP:
         self.dm_mixing_weight = dm_mixing_weight
         self.number_pulay     = number_pulay
         self.dm_tol           = dm_tol
-        self.xc               = xc
         self.basis            = basis
         self.mesh_cutoff      = mesh_cutoff
         self.max_scf_it       = max_scf_it
@@ -217,7 +225,7 @@ class SiP:
         self.bands_plot       = Bands_plot
         self.wd               = wd
         self.elec_inds        = elec_inds
-        self.mpi              = mpi
+        self.mpi              = mpi + ' '
         self.mix_ps           = mix_ps
         if print_console:
             self.print_no_print = '|tee'
@@ -225,23 +233,26 @@ class SiP:
             self.print_no_print = '>'
         self.Chem_Pot         = Chem_Pot
         if Chem_Pot is not None:
-            self.Voltage          = max(Chem_Pot) - min(Chem_Pot)
+            self.Voltage          = max(max(Chem_Pot) - min(Chem_Pot), max([abs(cp) for cp in Chem_Pot]))
+            #self.Voltage          = max(Chem_Pot) - min(Chem_Pot)
         else:
             self.Voltage = None
         self.semi_inf         = semi_inf
         self.tb_trans_exec    = tb_trans_exec
         self.gen_basis_exec   = gen_basis
         self.kp_tbtrans       = kp_tbtrans
-        self.save_EP          = save_EP
+        #self.save_EP          = save_EP
         self.trans_emin       = trans_emin
         self.trans_emax       = trans_emax
         self.trans_delta      = trans_delta
         self.custom_tbtrans_contour = custom_tbtrans_contour
+        if (np.array(Chem_Pot)!=0.0).any(): NEGF_calc = True
         self.NEGF_calc        = NEGF_calc
         self.reuse_dm         = reuse_dm
         self.dQ               = None
         self.set_pdos         = set_pdos
-        self.save_electrostatic_potential = save_es
+        #self.save_electrostatic_potential = save_es
+        self.save_potential_grids=save_potentials
         self.buffer_atoms     = buffer_atoms
         self.Device_atoms     = Device_atoms
         self.mixer            = mixer
@@ -249,22 +260,22 @@ class SiP:
         self.elec_bloch       = elec_bloch
         self.mix_what         = mix_what
         self.elec_RSSE        = elec_RSSE
+        self.elec_SurRSSE     = elec_SurRSSE
+        if elec_SurRSSE: self.elec_RSSE = True
         self.save_SE          = save_SE
         self.save_SE_only     = save_SE_only
         self.lua_script       = lua_script
         self.dic              = dictionary
-        self.print_mulliken   = print_mulliken 
+        self.print_mulliken   = print_mulliken
+        self.contour_settings = contour_settings
+        
         
         if skip_distance_check == True:
             pass
         else:
             self.Check_Distances()
-        
-        self.denchar_files = denchar_files
+        self.denchar_files          = denchar_files
         self.initialised_attributes =  [i for i in self.__dict__.keys()]
-        
-        
-        print('self.pos is reduced coordinates, self.pos_real_space is actual coordinates!\n')
         
         non_ortho=False
         for i in range(3):
@@ -294,34 +305,42 @@ class SiP:
         
         self.pos   = np.array(positions)
         
-        
         #Shitty name, yes, but now it is there. 
         self.pos_real_space = pos
         
         self.cell_spg = (self.lat,self.pos,np.abs(s))
         try:
+            if self.skip_spg_sp:
+                assert 1 == 0
             self.get_path = seekpath.get_path(self.cell_spg,True)
         except:
             self.get_path = None
         try:
+            if self.skip_spg_sp:
+                assert 1 == 0
             self.sym_dic  = self.get_path['point_coords']
         except:
             self.sym_dic  = None
         try:
+            if self.skip_spg_sp:
+                assert 1 == 0
             self.k_path   = seekpath.get_path(self.cell_spg,True)['path']
         except:
             self.k_path   = None 
         try:
+            if self.skip_spg_sp:
+                assert 1 == 0
             self.sym      = spg.get_spacegroup(self.cell_spg,symprec=1e-3)
         except:
             self.sym      = None
         try:
+            if self.skip_spg_sp:
+                assert 1 == 0
             self.standard_cell = spg.standardize_cell(self.cell_spg)
         except:
             self.standard_cell = None
         if self.Standardize_cell==True:
             self.standardise_cell()
-    
     
     def standardise_cell(self):
         if self.standard_cell==None:
@@ -351,17 +370,22 @@ class SiP:
             self.Device_atoms = inds_dev
         else:
             print('You have already set device atoms. Dont give these if you want to use this')
-        
+    
     def barebone_fdf(self, eta = 0.0):
         barebones_RUN(self, eta = eta)
     
-    def fdf(self, eta = 0.0, manual_pp = [], fix_hartree = True):
+    def fdf(self, eta = 0.0, manual_pp = [], fix_hartree = False):
         write_fdf(self, eta = eta)
         if self.Voltage is None:
             pass
-        elif self.Voltage!=0 and fix_hartree:#  or self.non_ortho==True:
+        elif self.Voltage!=0 and fix_hartree:
             self.write_more_fdf(['TS.Hartree.Fix -A'])
         self.get_pseudo_paths(manual = manual_pp)
+        if hasattr(self, '_mixing_dic'):
+            for k in self._mixing_dic.keys():
+                atoms, frac = self._mixing_dic[k]
+                self.ps_mixer(atoms, frac, k)
+            self.dump_pseudo_list_to_struct()
         
         if self.dic != None:
             keys = self.dic.keys()
@@ -370,14 +394,17 @@ class SiP:
                 if len(k.split())==1:
                     which = 'DEFAULT'
                 else:
-                    which = k.split()[0]
-                    k = k.split()[1]
-                print(which, v)
+                    which = k.split(' ')[0]
+                    k = k.split(' ')[1]
                 
                 self.write_more_fdf([k+ ' ' + v + '\n'], name = which)
     
     def fdf_relax(self, Constraints, force_tol = 0.01, max_it = 1000):
+        if self.solution_method=='transiesta':
+            self.fdf()
         write_relax_fdf(self, Constraints = Constraints, force_tol = force_tol, max_it = max_it)
+        if self.solution_method=='transiesta':
+            self.write_more_fdf(['%include TS_TBT.fdf'], name = 'RUN')
         self.get_pseudo_paths()
     
     def read_relax(self):
@@ -422,24 +449,29 @@ class SiP:
                     else:
                         name+=let
                  
-                if Num2Sym[atom].replace('_ghost', '') == name and self.xc in pp:
+                if Num2Sym[atom].replace('_ghost', '') == name and self.xc.lower() in pp:
                     paths+=['../'+self.pp_path+'/'+pp]
-                
+        
         self.pseudo_paths = paths
         it=0
         for p in paths:
-            os.system('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psf')
-            it+=1
+            if '.psf' in p:
+                os.system('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psf')
+                it+=1
+            if '.psml' in p:
+                os.system('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psml')
+                it+=1
         
+    
     def add_elecs(self,L):
         self.elecs = L
     
-    def find_elec_inds(self, tol = 1e-2, correct_electrode_types = False):
+    def find_elec_inds(self, tol = 1e-2, correct_electrode_types = False, fast_way = True):
         inds = [ [] for e in self.elecs ]
         it_e = 0
         
         for e in self.elecs:
-            if e.elec_RSSE == False:
+            if e.elec_RSSE == False:# or e.elec_SurRSSE:
                 
                 if isinstance(e.elec_bloch, list) or isinstance(e.elec_bloch, np.ndarray):
                     direc = np.where(np.array(e.elec_bloch)>1)[0][0]
@@ -447,22 +479,48 @@ class SiP:
                     POS = e.pos_real_space.copy()
                     for i in range(1,e.elec_bloch[direc]):
                         POS = np.vstack((POS, A * i + e.pos_real_space))
+                    if (np.array(e.elec_bloch)>1).sum()>1:
+                        print('Several bloch directions not implemented in siesta_python yet')
+                        error()
                     
                     for i in range(len(POS)):
                         ri = POS[i]
-                        for j in range(len(self.pos_real_space)):
-                            rj = self.pos_real_space[j]
-                            if np.linalg.norm(ri-rj) < tol:
-                                inds[it_e]+=[j]
+                        if fast_way:
+                            dij = np.linalg.norm(ri - self.pos_real_space,axis = 1)
+                            idx = np.where(dij<tol)[0]
+                            if len(idx)==0:
+                                pass
+                            elif len(idx)==1:
+                                inds[it_e]+=[idx[0]]
+                            else:
+                                print('found double electrode index')
+                                assert 1 == 0
+                        else:
+                            for j in range(len(self.pos_real_space)):
+                                rj = self.pos_real_space[j]
+                                if np.linalg.norm(ri-rj) < tol:
+                                    inds[it_e]+=[j]
                 else:
                     for i in range(len(e.pos_real_space)):
                         ri = e.pos_real_space[i]
-                        for j in range(len(self.pos_real_space)):
-                            rj = self.pos_real_space[j]
-                            if np.linalg.norm(ri-rj) < tol:
-                                inds[it_e]+=[j]
+                        if fast_way:
+                            dij = np.linalg.norm(ri - self.pos_real_space,axis = 1)
+                            idx = np.where(dij<tol)[0]
+                            if len(idx)==0:
+                                pass
+                            elif len(idx)==1:
+                                inds[it_e]+=[idx[0]]
+                            else:
+                                print('found double electrode index')
+                                assert 1 == 0
+                        else:
+                            for j in range(len(self.pos_real_space)):
+                                rj = self.pos_real_space[j]
+                                if np.linalg.norm(ri-rj) < tol:
+                                    inds[it_e]+=[j]
+                        
             
-            if e.elec_RSSE == True:
+            elif e.elec_RSSE == True or e.elec_surRSSE:
                 R,S = e.get_RS_pos()
                 for i in range(len(R)):
                     ri = R[i]
@@ -487,6 +545,8 @@ class SiP:
             n+=len(idx_e)
         
         self.pos_real_space = self.pos_real_space[idx]
+        self._rearange_indices = idx
+        
         print(inds)
         if correct_electrode_types == True:
             it=0
@@ -539,6 +599,7 @@ class SiP:
     def write_analysis_results(self):
         WRITE=read_analyze(self)
         self.write_more_fdf(WRITE,name = 'TS_TBT')
+    
     def run_tbt_analyze_in_dir(self):
         command =  self.mpi + self.tb_trans_exec  + ' -fdf TBT.Analyze RUN.fdf > RUN_Analyze.out'
         os.chdir(self.dir)
@@ -546,7 +607,6 @@ class SiP:
         os.chdir('..')
         WRITE = read_analyze(self)
         self.write_more_fdf(WRITE, name = 'TS_TBT')
-    
     
     def run_siesta_in_dir(self, use_subprocess = False, wait = True):
         if self.solution_method=='diagon':
@@ -569,8 +629,6 @@ class SiP:
         os.chdir(self.dir)
         os.system(command)
         os.chdir('..')
-    
-    
     
     
     def run_gulp_in_dir(self, mpi_run =False):
@@ -670,7 +728,7 @@ class SiP:
         
     
     def run_tbtrans_in_dir(self,DOS_GF= False, DOS_A=False, DOS_A_ALL=False,ORBITAL_CURRENT=False, Custom = [],
-                           use_subprocess = False, wait = True):
+                           use_subprocess = False, wait = True, eta_elecs = None):
         print('Running TB-Trans in Directory: '+self.dir+ '!\n')
         self.write_tb_trans_kp()
         n = 'RUN'         #self.sl
@@ -689,9 +747,9 @@ class SiP:
         if len(Custom)!=0:
             for C in Custom:
                 List+=[C]
-        
+        if eta_elecs is not None:
+            List+=['TBT.Elecs.Eta '+str(eta_elecs)+'\n']
         self.write_more_fdf(List,name='TS_TBT')
-        
         
         if use_subprocess:
             if wait:
@@ -710,6 +768,8 @@ class SiP:
     
     def get_potential_energy(self):
         return read_total_energy(self)
+    def get_fermi_level(self):
+        return read_fermi_level(self)
     
     def relaxed_system_energy(self):
         import subprocess
@@ -753,15 +813,18 @@ class SiP:
         self.add_stuff(dic)
     
     def Add_Charged_Bounded_Plane(self, O, A, B,  Charge, cut_off, spread, kind = 'gauss'):
-        self.write_more_fdf(['%block Geometry.Charge\n',
-                            ' Bounded plane ' + str(Charge)  + ' \n',
-                            '  '+ kind +' ' + str(spread) + ' ' +    str(cut_off)  + ' Ang\n',
-                            '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
-                            '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
-                            '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
-                            '%endblock Geometry.Charge\n  ' 
-                            ],
+        string = ['%block Geometry.Charge\n',
+                  ' Bounded plane ' + str(Charge)  + ' \n',
+                  '  '+ kind +' ' + str(spread) + ' ' +    str(cut_off)  + ' Ang\n',
+                  '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
+                  '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
+                  '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
+                  '%endblock Geometry.Charge\n  ' 
+                  ]
+        
+        self.write_more_fdf(string,
                             name = 'STRUCT')
+        
         dic = {'what': 'charged bounded plane',
                'charge':  Charge,
                'vectors': [O,A,B],
@@ -769,67 +832,114 @@ class SiP:
                'cut_off': cut_off,
                'kind':    kind}
         self.add_stuff(dic)
-    
-    def Add_Charged_Box(self,O, A, B, C, Charge):
-        self.write_more_fdf(['%block Geometry.Charge\n',
-                            ' box ' +  str(Charge) + ' \n',
-                            '    delta\n'
-                            '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
-                            '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
-                            '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
-                            '  ' + str(C[0]) + ' ' + str(C[1]) + ' ' + str(C[2]) + ' Ang\n',
-                            '%endblock Geometry.Charge\n  ' 
-                            ],
-                            name = 'STRUCT')
+        
+    def Add_Charged_Box(self,O, A, B, C, Charge, Ret = False):
+        if O.shape==(3,):
+            string = ['%block Geometry.Charge\n',
+                      ' box ' +  str(Charge) + ' \n',
+                      '    delta\n'
+                      '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
+                      '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
+                      '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
+                      '  ' + str(C[0]) + ' ' + str(C[1]) + ' ' + str(C[2]) + ' Ang\n',
+                      '%endblock Geometry.Charge\n  ' 
+                      ]
+            
+            self.write_more_fdf(string,
+                                name = 'STRUCT')
+            write_this = string
+        elif len(O.shape)==2:
+            write_this = ['%block Geometry.Charge\n']
+            for i,_ in enumerate(Charge):
+                oo = O[i]; aa = A[i]; bb = B[i]; cc = C[i]; charge = Charge[i]
+                write_this += [' box ' +  str(charge) + ' \n',
+                               '    delta\n'
+                               '  ' + str(oo[0]) + ' ' + str(oo[1]) + ' ' + str(oo[2]) + ' Ang\n',
+                               '  ' + str(aa[0]) + ' ' + str(aa[1]) + ' ' + str(aa[2]) + ' Ang\n',
+                               '  ' + str(bb[0]) + ' ' + str(bb[1]) + ' ' + str(bb[2]) + ' Ang\n',
+                               '  ' + str(cc[0]) + ' ' + str(cc[1]) + ' ' + str(cc[2]) + ' Ang\n',
+                              ]
+            
+            write_this += ['%endblock Geometry.Charge\n']
+            self.write_more_fdf(write_this, name = 'STRUCT')
+        
         dic = {'what': 'charged box',
                'charge':   Charge,
                'vectors': [O,A,B,C]}
         self.add_stuff(dic)
-    
-    def Add_Charged_Sphere(self, Cent,  R, Ch, cut_off = 5.0, Block = True):
-        if Block == True:
+        if Ret:
+            return write_this
+        
+        
+    def Add_Charged_Sphere(self, Cent,  R, Ch, cut_off = 5.0):
+        if Cent.shape==(3,):
             self.write_more_fdf(['%block Geometry.Charge\n',
                                  ' coords ' +  str(Ch) + ' \n',
-                                 '    gauss '+str(cut_off)+'  '+str(R)+' Ang\n'
-                                 '       1 spheres\n'
-                                 
+                                 '    gauss '+str(cut_off)+'  '+str(R)+' Ang\n',
+                                 '       1 spheres\n',
                                  '       ' + str(Cent[0]) + ' ' + str(Cent[1]) + ' ' + str(Cent[2]) + ' Ang\n',
                                  '%endblock Geometry.Charge\n  ' 
                                  ],
                                 name = 'STRUCT')
         else:
-            self.write_more_fdf([' coords ' +  str(Ch) + ' \n',
-                                 '    gauss '+str(cut_off)+'  '+str(R)+' Ang\n'
-                                 '       1 spheres\n'
-                                 
-                                 '       ' + str(Cent[0]) + ' ' + str(Cent[1]) + ' ' + str(Cent[2]) + ' Ang\n',
-                                 ],
-                                name = 'STRUCT')
+            write_this = ['%block Geometry.Charge\n']
+            for i,_ in enumerate(Cent):
+                cent = Cent[i]; r = R[i]; ch = Ch[i]; 
+                write_this+=[' coords ' +  str(ch) + ' \n',
+                             '    gauss '+str(cut_off)+'  '+str(r)+' Ang\n'
+                             '       1 spheres\n',
+                             '       ' + str(cent[0]) + ' ' + str(cent[1]) + ' ' + str(cent[2]) + ' Ang\n',
+                             ]
+            write_this+=['%endblock Geometry.Charge']
+            self.write_more_fdf(write_this)
             
+        
         dic = {'what': 'charged sphere',
                'charge':   Ch,
                'cut_off': cut_off,
                'vectors': [Cent, R]}
         self.add_stuff(dic)
     
-    def Real_space_SE(self, ax_decimation, ax_integrate,  supercell, eta,Emin, Emax, dE, Contour = None):
-        #
-        #Straight out of sisl tutorial TB8
-        #
+    def Real_space_SE(self, ax_decimation, ax_integrate,  
+                      supercell, eta,Emin, Emax, dE, 
+                      Contour = None, ending = 'TSHS',
+                      only_couplings = False,
+                      dk = 1000.0, 
+                      mu = None,
+                      parallel_E = False,
+                      num_procs  = 4
+                      ):
+
+        """
+            Straight out of sisl tutorial TB8
+            see sisl documentation RealSpaceSE for more
+            info
+        """
+        
         if self.elec_RSSE == False:
             print('set elec_RSSE to True!')
             assert 1 == 0
         import tqdm
+        
+        if hasattr(self,'RSSE_dict'):
+            ax_decimation= self.RSSE_dict['ax_decimation']
+            ax_integrate = self.RSSE_dict['ax_integrate']
+            supercell    = self.RSSE_dict['supercell']
+            eta          = self.RSSE_dict['eta']
+            Contour      = self.RSSE_dict['Contour']
         
         if Contour is None:
             E = np.arange(Emin, Emax + dE / 2, dE)
         else:
             E = Contour.copy()
         
-        H_minimal = sisl.get_sile(self.dir + '/' + self.sl + '.TSHS').read_hamiltonian()
-        RSSE = sisl.RealSpaceSE(H_minimal, ax_decimation, ax_integrate, supercell)
+        H_minimal = sisl.get_sile(self.dir + '/' + self.sl + '.'+ending).read_hamiltonian()
+        print(H_minimal)
+        RSSE      = sisl.RealSpaceSE(H_minimal, ax_decimation, ax_integrate, supercell, dk = dk)
         H_elec, elec_indices = RSSE.real_space_coupling(ret_indices=True)
-        H_elec.write(self.dir + '/'+ self.sl + '.TSHS')
+        print(H_elec.no)
+        H_elec.write(self.dir + '/'+ self.sl + '.'+ending)
+        
         H = RSSE.real_space_parent()
         # Create the truedevice by re-arranging the atoms
         indices = np.arange(len(H))
@@ -837,19 +947,151 @@ class SiP:
         indices = np.concatenate([elec_indices, indices])
         np.save(self.dir + '/RS_Coupling_pos', H.xyz[elec_indices])
         np.save(self.dir + '/RS_Coupling_specie', H.toASE().numbers[elec_indices])
-        eta = eta * 1j
+        if only_couplings:
+            return 
+        
         gamma = sisl.MonkhorstPack(H_elec, [1] * 3)
-        sisl.io.tableSile(self.dir + '/contour.E', 'w').write_data(E, np.zeros(E.size) + dE)
+        sisl.io.tableSile(self.dir + '/contour.E', 'w').write_data(E#, np.zeros(E.size) + dE
+                                                                   )
+        
+        if parallel_E:
+            import joblib as Jl
+            global SE_func # for multiprocessing backend
+            def SE_func(e):
+                return e, RSSE.self_energy(e, bulk=True, coupling=True)
+            results = Jl.Parallel(n_jobs=num_procs,
+                                  backend = joblib_backend,
+                                  verbose = 10)(Jl.delayed(SE_func)(e + 1j*eta) for e in E)
+            del SE_func
+            ResDic = {}
+            for r in results:
+                ResDic.update({r[0]:r[1]})
         
         with sisl.io.tbtgfSileTBtrans(self.dir +'/' + self.sl +'.TBTGF') as f:
-            f.write_header(gamma, E + eta)
+            if mu is not None:f.write_header(gamma, E + 1j * eta, mu = mu)
+            else:             f.write_header(gamma, E + 1j * eta)
+            
             for ispin, new_k, k, e in tqdm.tqdm(f):
                 if new_k:
-                    f.write_hamiltonian(H_elec.Hk(format='array', dtype=np.complex128))
-                SeHSE = RSSE.self_energy(e + eta, bulk=True, coupling=True)
+                    f.write_hamiltonian(H_elec.Hk(format='array', dtype=np.complex128),
+                                        H_elec.Sk(format='array', dtype=np.complex128))
+                if parallel_E: SeHSE = ResDic[e+1j*eta]
+                else:          SeHSE = RSSE.self_energy(e + 1j*eta, bulk=True, coupling=True)
                 f.write_self_energy(SeHSE)
-        self.RSSE_Energy_from_to = (Emin, Emax)
         
+        self.RSSE_Energy_from_to = (Emin, Emax)
+    
+    def Real_space_SI(self, ax_integrate, supercell, eta, Contour,
+                      nsc = (1,3,1), 
+                      ending = 'TSHS',
+                      Hsurf_in = None,
+                      only_couplings = False,
+                      dk = 1000.0,
+                      mu = None,
+                      parallel_E = False,
+                      num_procs  = 4,
+                      sisl_patch_1 = False,
+                      keep_unpicklable_objects = False,
+                      
+                      ):
+        import tqdm
+        from sisl.physics import RecursiveSI, RealSpaceSI
+        if self.elec_RSSE == False:
+            print('set elec_RSSE to True!')
+            error()
+        if self.elec_SurRSSE == False:
+            print('set elec_SurRSSE to True!')
+            error()
+        
+        if hasattr(self,'SurRSSE_dict'):
+            ax_integrate = self.SurRSSE_dict['ax_integrate']
+            supercell    = self.SurRSSE_dict['supercell']
+            eta          = self.SurRSSE_dict['eta']
+            Contour      = self.SurRSSE_dict['Contour']
+            nsc          = self.SurRSSE_dict['nsc']
+            Hsurf_in     = self.SurRSSE_dict['Hsurf_in']
+        
+        E = Contour
+        def translate(s):
+            return s.replace('a1','A').replace('a2','B').replace('a3','C')
+        H_minimal = sisl.get_sile(self.dir + '/' + self.sl + '.'+ending).read_hamiltonian()
+        SE        = RecursiveSI(H_minimal, translate(self.semi_inf))
+        if Hsurf_in is None:
+            Hsurf     = H_minimal.copy()
+        else:
+            Hsurf = Hsurf_in.copy()
+        Hsurf.set_nsc(nsc)
+        if isinstance(ax_integrate, int):
+            if not nsc[ax_integrate]>1:
+                print('Wrong nsc or ax_integrate passed!')
+                error()
+        if isinstance(ax_integrate, list):
+            if not (nsc[ax_integrate]>1).any():
+                print('Wrong nsc or ax_integrate passed!')
+                error()
+        
+        SRSSE = RealSpaceSI(SE, Hsurf, 
+                            ax_integrate, 
+                            unfold = supercell,
+                            dk = dk)
+        if sisl_patch_1:
+            print('---Warning---')
+            print('Youre now using a custom real_space_coupling method in the RealSpaceSI class')
+            
+            from siesta_python.sisl_patches import Alt_real_space_coupling
+            SRSSE.real_space_coupling = Alt_real_space_coupling.__get__(SRSSE, RealSpaceSI)
+            SRSSE.initialize()
+        if keep_unpicklable_objects:
+            self._RSSI_SE = SE
+            self._RSSI_SRSSE = SRSSE
+        
+        H_elec, elec_indices = SRSSE.real_space_coupling(ret_indices=True)
+        # Before we overwrite the electrode Hamiltonian for TBTrans we move the 
+        # minimal electrode Hamiltonian
+        _ori_name = self.dir + '/' + self.sl + '.'+ending
+        _new_name = self.dir + '/' + self.sl + '_minimal_old.'+ending
+        os.system('cp '+_ori_name + ' ' + _new_name)
+        
+        H_elec.write(self.dir + '/'+ self.sl + '.'+ending)
+        H = SRSSE.real_space_parent()
+        
+        #indices = np.arange(len(H))
+        #indices = np.delete(indices, elec_indices)
+        #indices = np.concatenate([elec_indices, indices])
+        np.save(self.dir + '/RS_Coupling_pos', H.xyz[elec_indices])
+        np.save(self.dir + '/RS_Coupling_specie', H.toASE().numbers[elec_indices])
+        if only_couplings:
+            return
+        
+        gamma = sisl.MonkhorstPack(H_elec, [1] * 3)
+        sisl.io.tableSile(self.dir + '/contour.E', 'w').write_data(E, np.zeros(E.size) + 0.)
+        if parallel_E:
+            import joblib as Jl
+            global SE_func # for multiprocessing backend
+            def SE_func(e):
+                return e, SRSSE.self_energy(e, bulk=True, coupling=True)
+            results = Jl.Parallel(n_jobs  = num_procs,
+                                  backend = joblib_backend,
+                                  verbose = 10)(Jl.delayed(SE_func)(e + 1j*eta) for e in E)
+            del SE_func
+            ResDic = {}
+            for r in results:
+                ResDic.update({r[0]:r[1]})
+        
+        with sisl.io.tbtgfSileTBtrans(self.dir +'/' + self.sl +'.TBTGF') as f:
+            if mu is not None:f.write_header(gamma, E + 1j * eta, mu = mu)
+            else:             f.write_header(gamma, E + 1j * eta)
+            
+            for ispin, new_k, k, e in tqdm.tqdm(f):
+                if new_k:
+                    f.write_hamiltonian(H_elec.Hk(format='array', dtype=np.complex128),
+                                        H_elec.Sk(format='array', dtype=np.complex128))
+                if parallel_E: SeHSE = ResDic[e+1j*eta]
+                else:          SeHSE = SRSSE.self_energy(e + 1j*eta, bulk=True, coupling=True)
+                f.write_self_energy(SeHSE)
+        
+        self.RSSE_Energy_from_to = (E.min(), E.max())
+    
     def get_RS_pos(self):
         try:
             p_rs = np.load(self.dir + '/RS_Coupling_pos.npy')
@@ -858,15 +1100,30 @@ class SiP:
         except: 
             return None, None
     
-    def copy_DM_from(self, object):
-        os.system('cp ' + object.dir + '/' + object.sl+'.TSDE ' + self.dir + '/' + self.sl + '.TSDE')
+    def reset_minimal_hamiltonian(self, ending = 'TSHS',k = ''):
+        _new_name = self.dir + '/' + self.sl + '_minimal_old.'+ending
+        old_name  = self.dir + '/' + self.sl + '.'+ending
+        os.system('mv '+k+_new_name + ' ' + old_name)
+    
+    def copy_DM_from(self, object, ftype='TSDE'):
+        ftype_ ='.'+ftype+' '
+        if isinstance(object, str):
+            os.system('cp '+object+'/*'+ftype_+self.dir+'/'+self.sl+ftype_)
+        if isinstance(object, SiP):
+            os.system('cp '+object.dir+'/'+object.sl+ftype_+self.dir+'/'+self.sl+ftype_)
         self.reuse_dm = True
+    
+    #
+    #def copy_siesta_DM_from(self, object):
+    #    if isinstance(object, str):
+    #        os.system('cp ' + object + '/*.DM ' + self.dir+'/'+self.sl+'.DM')
+    #    if isinstance(object, SiP):
+    #        os.system('cp ' + object.dir + '/' + object.sl+'.DM ' + self.dir + '/' + self.sl + '.TSDE')
+    #    self.reuse_dm = True
     
     def copy_TSHS_from(self, object):
         os.system('cp ' + object.dir + '/' + object.sl+'.TSHS ' + self.dir + '/' + self.sl + '.TSHS')
     
-    def copy_siesta_DM_from(self, object):
-        os.system('cp ' + object.dir + '/' + object.sl+'.DM ' + self.dir + '/' + self.sl + '.DM')
     
     def save_file(self, file, folder, newname):
         try:
@@ -881,7 +1138,7 @@ class SiP:
         self.Mulliken_C   = C 
     
     def write_tb_trans_kp(self):
-        if self.kp_tbtrans == None:
+        if self.kp_tbtrans == None and hasattr(self, 'manual_tbtrans_kpoint') == False:
             print('no k-poins for tbtrans!')
             pass
         else:
@@ -898,6 +1155,7 @@ class SiP:
                     
                     else: f.write(l)
                 f.close()
+            
     
     def gen_basis(self):
         os.chdir(self.dir)
@@ -931,12 +1189,13 @@ class SiP:
         os.system('rm ' + name  + '.fdf')
         os.chdir('..')
     
-    def manual_k_points(self,reduced_k_arr,weights):
+    def manual_k_points(self,reduced_k_arr,weights, tbtrans = False):
         k = reduced_k_arr.copy()
         assert len(k) == len(weights)
         L = ['kgrid.File Manual_k.fdf']
-        self.delete_fdf('KP')
-        self.write_more_fdf(L, name = 'KP')
+        end = '_TBT' if tbtrans else ''
+        self.delete_fdf('KP'+end)
+        self.write_more_fdf(L, name = 'KP'+end)
         with open(self.dir + '/' + 'Manual_k.fdf', 'w') as f:
             nk = len(k)
             f.write(str(nk) + '\n')
@@ -1030,9 +1289,12 @@ class SiP:
         from ase import Atoms
         return Atoms(positions = self.pos_real_space, cell = self.lat, numbers = self.s)
     
-    def fois_gras(self, H):
-        H.write(self.dir + '/' + self.sl + '.TSHS')
-      
+    def fois_gras(self, H,ending = 'TSHS'):
+        H.write(self.dir + '/' + self.sl + '.'+ending)
+    # Wrapped fois gras for less edgy name
+    def manual_H(self, H,ending='TSHS'):
+        self.fois_gras(H,ending=ending)
+    
     def to_sisl(self, what = 'geom', R = 3.0):
         if what == 'geom':
             A = sisl.Geometry.fromASE(self.toASE())
@@ -1232,6 +1494,13 @@ class SiP:
         write_this += ['%endblock SyntheticAtoms']
         self.write_more_fdf(write_this, name = 'STRUCT')
     
+    def set_synthetic_mixes(self, mix_name,frac, atoms):
+        if not hasattr(self, '_mixing_dic'):
+            self._mixing_dic              = {}
+            print('Made dictionary for mixing info')
+        self._mixing_dic.update({mix_name:[atoms, frac]})
+        assert len(self._mixing_dic.keys())<20
+    
     def nnr(self, n_nn = 3, r_cut = 2.5):
         # Slow version of the similar function found in GrainB2
         ps = np.zeros((0,3))
@@ -1303,7 +1572,18 @@ class SiP:
         #return pd, td
         self.set_struct(self.lat, pd, td)
     def Passivate_with_molecule(self, mol, dist, NN_dist = 1.5, num_NN = 3, 
-                                align_axis = np.array([1,0,0])):
+                                align_axis = np.array([1,0,0]),
+                                cond_filling = False, 
+                                cond=None):
+        """mol: ASE molecule
+           dist: distance mol is placed from edge
+           NN_dist: nearest neighbor distance, used by edge finding algo
+           num_NN: default number of nearest neighbor in bulk
+           align axis: does something??
+           cond_filling: if there is a condition for when to place a molecule somewhere
+           cond: function that takes the positions of a molecule placed at a point and return a bool
+            """
+        
         align_axis = align_axis / np.linalg.norm(align_axis)
         nnr = self.nnr(n_nn = 10, r_cut = 2 * NN_dist)
         edge_idx = self.Find_edges(nnr, NN_dist = NN_dist, num_NN = num_NN)
@@ -1332,84 +1612,60 @@ class SiP:
                 new_pos[it * na + KK, :] = ri + vec * dist + M_rot.dot(mol.positions[KK])
                 new_t  [it * na + KK] = tb[KK]
             it+=1
+        n_atoms_mol  =  len(mol.numbers)
+        N_new        =  len(new_pos)//n_atoms_mol
+        if cond_filling:
+            idx = []
+            for ii in range(N_new):
+                if cond(new_pos[ii*n_atoms_mol : ii*n_atoms_mol + n_atoms_mol]):
+                    for jj in range(n_atoms_mol):
+                        idx += [ii*n_atoms_mol + jj]
+            new_pos = new_pos[idx]
+            new_t   = new_t[idx]
         
-        #return new_pos, new_t
-        pd = np.vstack((self.pos_real_space, new_pos))
-        td = np.hstack((self.s, new_t))
+        pd    = np.vstack((self.pos_real_space, new_pos))
+        td    = np.hstack((self.s, new_t))
         self.set_struct(self.lat, pd, td)
     
-    def x_to_z(self):
-        U = np.array([[0,0,1],
-                      [0,1,0],
-                      [1,0,0]])
+    def x_to_z(self,x = 'x',z = 'z', update_sym_dic = True):
+        if x == 'x' and z == 'z':
+            U = np.array([[0,0,1],
+                          [0,1,0],
+                          [1,0,0]])
+            switch = [2,1,0]
+            
+        if x == 'y' and z == 'z':
+            U = np.array([[1,0,0],
+                          [0,0,1],
+                          [0,1,0]])
+            switch = [0,2,1]
+        if x == 'x'  and z =='y':
+            U = np.array([[0,1,0],
+                          [1,0,0],
+                          [0,0,1]])
+            switch = [1,0,2]
         
-        pd = self.pos_real_space[:,[2,1,0]]
+        if update_sym_dic:
+            def rear(k):
+                return [k[switch[0]], k[switch[1]],k[switch[2]]]
+            new_sym_dic = {}
+            for i in self.sym_dic.keys():
+                kp = self.sym_dic[i]
+                new_sym_dic.update({i:rear(kp)})
+            self.sym_dic = new_sym_dic
+        pd = self.pos_real_space[:,switch]
         lat = U.T.dot(self.lat).dot(U)
-        if self.kp is not None:
-            self.kp = self.kp[::-1]
-        if self.kp_tbtrans is not None:
-            self.kp_tbtrans = self.kp[::-1]
+        val = 0
+        val += self.Standardize_cell 
         
+        self.Standardize_cell = False
         self.set_struct(lat, pd, self.s)
-    
+        self.Standardize_cell = bool(val)
     
     def tile_dm(self, n, axis):
         d = sisl.get_sile(self.dir + '/' + self.sl + '.DM').read_density_matrix()
         d = d.tile(n,axis )
         d.write(self.dir + '/' + self.sl + '.DM')
-    
-        
-    
-    # def Matrices(self, eta = 1e-3):
-    #     H = sisl.get_sile(self.dir + '/' + self.sl + '.TSHS').read_hamiltonian()
-    #     S = sisl.get_sile(self.dir + '/' + self.sl + '.TSHS').read_overlap()
-        
-    #     if self.spin_pol in ['F', 'False', 'false']:
-    #         tbt = sisl.get_sile(self.dir + '/' + self.sl + '.TBT.nc')
-    #         piv = tbt.pivot()
-    #         btd = tbt.btd()
-    #         P = [0]
-    #         for b in btd:
-    #             P+=[P[-1] + b]
-    #         SE, inds = read_SE_from_tbtrans(self.dir + '/'+ self.sl+'.TBT.SE.nc')
-    #         self_Es   = [SE]
-    #         self_inds = [inds]
-    #         Piv       = [piv]
-    #         Part      = [P]
-            
-    #         Sys.set_SE(self_Es, self_inds)
-    #         Sys.set_eta(1e-3)
-    #         Sys.set_ev(Eg)
-    #         Sys.set_kv(kv)
-            
-    #         return Greens_function(H, self_Es, self_inds, Piv, Part, sisl_S = S, eta = eta)
-        
-    #     if self.spin_pol in ['T', 'True', 'true']:
-    #         tu = sisl.get_sile(self.dir + '/' + self.sl+ '.TBT_UP.nc')
-    #         td = sisl.get_sile(self.dir + '/' + self.sl+ '.TBT_DN.nc')
-            
-    #         pu = tu.pivot()
-    #         pd = td.pivot()
-    #         btd_u = tu.btd()
-    #         btd_d = td.btd()
-            
-    #         Pu = [0]; Pd = [0]
-            
-    #         for b in btd_u:
-    #             Pu+= [Pu[-1] + b ]
-                
-    #         for b in btd_d:
-    #             Pd+= [Pd[-1] + b ]
-
-    #         SE_u, inds_u = read_SE_from_tbtrans(self.dir + '/' + self.sl+'.TBT_UP.SE.nc')
-    #         SE_d, inds_d = read_SE_from_tbtrans(self.dir + '/' + self.sl+'.TBT_DN.SE.nc')
-    #         self_Es   = [SE_u, SE_d]
-    #         self_inds = [inds_u, inds_d]
-    #         Piv       = [pu, pd]
-    #         Part      = [Pu, Pd]
-    #         return  Greens_function(H, self_Es, self_inds, Piv, Part, sisl_S = S, eta = eta)
-        
-        
     # def Methfessel_Paxton(self, N, plot = False):
     #     lines = ['OccupationFunction MP', 
     #              'OccupationMPOrder '+ str(N)]
@@ -1418,57 +1674,88 @@ class SiP:
             
         
     #     self.write_more_fdf()
+    def move(self,T, move_elecs = True):
+        T = np.array(T)
+        new_pos = self.pos_real_space + T
+        self.set_struct(self.lat, new_pos, self.s)
+        if move_elecs:
+            for e in self.elecs:
+                e.move(T)
         
-    # def Wrap_unit_cell(self,shrink=1e-5,PRINT=False,strict_z=False):
-    #     a1=self.lat[0,:].copy()
-    #     a2=self.lat[1,:].copy()
-    #     a3=self.lat[2,:].copy()
-    #     a1-= shrink * a1/np.linalg.norm(a1)
-    #     a2-= shrink * a2/np.linalg.norm(a2)
-    #     a3-= shrink * a3/np.linalg.norm(a3)
+    
+    def Wrap_unit_cell(self,shrink=1e-5,PRINT=False,strict_z=False, cell = None, max_y_tiles = 5,
+                       use_ase = False, wrap_elecs = False, wrap_buffer = False, ase_pbc = True):
+        if use_ase:
+            sisl_obj = self.to_sisl()
+            idx = [i for i in range(len(self.s)) 
+                     if i not in list(np.array(self.elec_inds).ravel()) 
+                     and i not in self.buffer_atoms ]
+            print(len(idx))
+            if wrap_elecs:
+                idx += list(np.array(self.elec_inds).ravel())
+            if wrap_buffer:
+                idx += self.buffer_atoms
+            
+            sisl_obj = sisl_obj.sub(idx)
+            ase_obj = sisl_obj.toASE()
+            ase_obj.wrap(pbc = ase_pbc)
+            new_pos = self.pos_real_space.copy()
+            new_pos[idx] = ase_obj.positions
+            self.set_struct(self.lat, new_pos, self.s)
+            return
         
-    #     #zero = -shrink * a1/np.linalg.norm(a1) - shrink * a2/np.linalg.norm(a2)-shrink * a3/np.linalg.norm(a3)
-    #     if strict_z==False: 
-    #         zero=np.array([0,0,-shrink])
-    #         a1 += zero
-    #         a2 += zero
-    #         a3 += zero
-    #     else: zero = np.zeros(3)
-    #     points  = [zero,a1,a1+a2,a2,zero+a3,a1+a3,a1+a2+a3,a2+a3]
-    #     faces = [[0,1,2,3][::-1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]
-    #     Cell = Structure(points,faces,convex = True)
-    #     P_mid = (a1+a2+a3)/2
-    #     Try   = Cell.Inside_Struc_Convex(P_mid,full_return=True)
-    #     if PRINT==True:
-    #         print(Try, Try.shape)
-    #     it=0
-    #     for x in Try[0,:]:
-    #         if x > 0: 
-    #             faces[it] = faces[it][::-1]
-    #             if PRINT==True:
-    #                 print('face ' +str(it)+' reversed')
-    #         it+=1
-    #     Cell = Structure(points,faces,convex = True)
-    #     Try2 = Cell.Inside_Struc_Convex(P_mid)
-    #     if PRINT==True:
-    #         print(Try2)
-    #     Truth = Cell.Inside_Struc_Convex(self.pos_real_space)
-    #     T=[]
-    #     for i in range(-1,2):
-    #         for j in range(-1,2):
-    #             if i!=j:
-    #                 T+=[[i,j]]
+        from OldEMCode.Build_eps_from_planes import Structure
+        if cell is None:
+            a1=self.lat[0,:].copy(); a2=self.lat[1,:].copy(); a3=self.lat[2,:].copy()
+        else:
+            a1, a2, a3 = cell.copy()
         
-    #     for i in range(len(Truth)):
-    #         pi=self.pos_real_space[i,:]
-    #         if Truth[i] == False:
-    #             print('lol')
-    #             Break=False
-    #             for t in T:
-    #                 if Cell.Inside_Struc_Convex(pi+self.lat[0,:]*t[0]+self.lat[1,:]*t[1]) and Break==False:
-    #                     self.pos_real_space[i,:] = pi+self.lat[0,:]*t[0]+self.lat[1,:]*t[1]
-    #                     Break=True
-    #                     print('Atom '+str(i)+' Wrapped inside unit-cell with lattice-vector-combination '+str(t[0])+','+str(t[1])+'\n')
+        a1-= shrink * a1/np.linalg.norm(a1); a2-= shrink * a2/np.linalg.norm(a2)
+        a3-= shrink * a3/np.linalg.norm(a3)
+        
+        
+        #zero = -shrink * a1/np.linalg.norm(a1) - shrink * a2/np.linalg.norm(a2)-shrink * a3/np.linalg.norm(a3)
+        if strict_z==False: 
+            zero=np.array([0,0,-shrink])
+            a1 += zero
+            a2 += zero
+            a3 += zero
+        else: zero = np.zeros(3)
+        points  = [zero,a1,a1+a2,a2,zero+a3,a1+a3,a1+a2+a3,a2+a3]
+        faces = [[0,1,2,3][::-1],[4,5,6,7],[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7]]
+        Cell = Structure(points,faces,convex = True)
+        P_mid = (a1+a2+a3)/2
+        Try   = Cell.Inside_Struc_Convex(P_mid,full_return=True)
+        if PRINT==True:
+            print(Try, Try.shape)
+        it=0
+        for x in Try[0,:]:
+            if x > 0: 
+                faces[it] = faces[it][::-1]
+                if PRINT==True:
+                    print('face ' +str(it)+' reversed')
+            it+=1
+        Cell = Structure(points,faces,convex = True)
+        Try2 = Cell.Inside_Struc_Convex(P_mid)
+        if PRINT==True:
+            print(Try2)
+        Truth = Cell.Inside_Struc_Convex(self.pos_real_space)
+        T=[]
+        for i in [0,-1,1]:
+            for j in range(-max_y_tiles,max_y_tiles+1):
+                if i!=j:
+                    T+=[[i,j]]
+        
+        new_xyz = self.pos_real_space.copy()
+        for i in range(len(Truth)):
+            pi=new_xyz[i]#self.pos_real_space[i,:]
+            if Truth[i] == False:
+                Break=False
+                for t in T:
+                    if Cell.Inside_Struc_Convex(pi+self.lat[0,:]*t[0]+self.lat[1,:]*t[1]) and Break==False:
+                        new_xyz[i] = pi+self.lat[0,:]*t[0]+self.lat[1,:]*t[1]
+                        Break=True
+        self.set_struct(self.lat, new_xyz, self.s)
     
     def Visualise(self,T=[[0,0]],axes=[0,1], Mull_step = -1, Mull_map = Identity, Mull_which = 0, adjust_size = 1, annotate = False):
         import matplotlib.pyplot as plt
@@ -1479,9 +1766,13 @@ class SiP:
         us = unique_list(self.s)
         for i,pi in enumerate(self.pos_real_space):
             if self.elec_inds is not None:
+                in_elec = False
                 for ei in self.elec_inds:
                     if i in ei:
                         color[i,:] = np.array([0,0.5,1])
+                        in_elec = True
+                if in_elec == False:
+                    color[i,:] = np.array(colors[us.index(self.s[i])])
             else:
                 color[i,:] = np.array(colors[us.index(self.s[i])])
             
@@ -1576,35 +1867,423 @@ class SiP:
         from ase.visualize import view
         view(self.to_sisl().toASE())
     
-    def run_TS_RSSE_calc(self, tile, tbt_contour, a1 = 0,a2 = 1, eta = 0.0, Contour = None, fix_dir = 'C', buffer_cond = None):
+    def run_TS_RSSE_calc(self, tile, tbt_contour, a1 = 0,a2 = 1, 
+                         eta = 0.0, Contour = None, 
+                         fix_dir = 'C',
+                         eta_negf = 0.01,
+                         buffer_cond = None,
+                         DOS_GF= False, 
+                         DOS_A=False, 
+                         DOS_A_ALL=False,
+                         ORBITAL_CURRENT=False, 
+                         Custom = [],
+                         manual_pp = [],
+                         relax = False,
+                         movenomove_func= None,
+                         initial_num_E = 45,
+                         skip_tbtrans = False,
+                         only_fail = False,
+                         dk = 1000.0,
+                         dk_fail = 10.0,
+                         parallel_E = False,
+                         num_procs = 4,
+                         ):
+        """ 
+            tile: number of supercells, may also be set with the RSSE/SurRSSE dictionaries
+            tbt_contour: Contour for tbtrans calculation
+            a1, a2: decimation and integration directions
+            eta: probably zero
+            Contour: Guess for initial contour for transiesta calculation
+            fix_dir: TS.Hartree.Fix  + this direction
+            eta_negf: broadening on the greens function calculation for the NEGF calculation in the small window
+            ...... document this
+            dk: real space integration fineness
+        """
+        
         elec_rsse_idx = [i for i in range(len(self.elecs)) if self.elecs[i].elec_RSSE]
         if Contour is None:
-            Contour = np.linspace(-1,1,45)+1j*0.01
+            Contour = np.linspace(-1,1,initial_num_E)+1j*0.1 # Dummy contour
         self.custom_tbtrans_contour = tbt_contour
         for i,e in enumerate(self.elecs):
-            e.fdf()
+            e.fdf(manual_pp = manual_pp)
             e.run_siesta_electrode_in_dir()
             if i in elec_rsse_idx:
-                e.Real_space_SE(a1,a2,tile, eta, -0, 0, 2/50, Contour = Contour)
+                if e.elec_SurRSSE == False:
+                    if hasattr(e, 'RSSE_dict'): e.RSSE_dict['Contour'] = Contour
+                    e.Real_space_SE(a1,a2,tile, eta, 0, 0, 2/50, Contour = Contour, dk=dk_fail, mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
+                else:
+                    if hasattr(e, 'SurRSSE_dict'): e.SurRSSE_dict['Contour'] = Contour
+                    if isinstance(a2, list): nsc = np.array([1 for i in range(3)]); nsc[a2] = 3
+                    else:                    nsc =          [1 for i in range(3)] ; nsc[a2] = 3
+                    e.Real_space_SI(a2, tile, eta, Contour, nsc, dk=dk_fail, mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
         self.find_elec_inds()
         if buffer_cond is not None:
             self.set_buffer_atoms(buffer_cond)
-        self.fdf()
+        self.fdf(manual_pp = manual_pp)
         self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
+        if self.NEGF_calc:
+            self.write_more_fdf(['TS.Contours.nEq.Eta '+str(eta_negf)+' eV'], name = 'TS_TBT')
+        
+        self.run_analyze_in_dir()
         self.run_siesta_in_dir()
+        if only_fail:
+            return
         
         TS_Contour = self.get_contour_from_failed_RSSE()
-        TS_Contour = TS_Contour[:,0] + 1j * TS_Contour[:,1]
+        print('\n Read contour with shape ', TS_Contour.shape, '\n')
+        TS_Contour = TS_Contour[:,0] + 1j * TS_Contour[:,1] # get the contour transiesta asks for
         for i,e in enumerate(self.elecs):
-            e.fdf()
+            e.fdf(manual_pp = manual_pp)
             e.run_siesta_electrode_in_dir()
             if i in elec_rsse_idx:
-                e.Real_space_SE(a1,a2,tile, 0.0, -0, 0, 2/50, Contour = TS_Contour)
+                if e.elec_SurRSSE == False:
+                    if hasattr(e, 'RSSE_dict'): e.RSSE_dict['Contour'] = TS_Contour
+                    e.Real_space_SE(a1,a2,tile, eta, 0, 0, 2/50, 
+                                    Contour = TS_Contour,     
+                                    dk=dk, 
+                                    mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
+                else:
+                    if hasattr(e, 'SurRSSE_dict'): e.SurRSSE_dict['Contour'] = TS_Contour
+                    if isinstance(a2, list): nsc = np.array([1 for i in range(3)]); nsc[a2] = 3
+                    else:                    nsc =          [1 for i in range(3)] ; nsc[a2] = 3
+                    #nsc = [1 for i in range(3)]; nsc[a2] = 3
+                    e.Real_space_SI(a2, tile, eta,                         
+                                    TS_Contour, 
+                                    nsc,
+                                    dk=dk, 
+                                    mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
         
-        self.fdf()
+        if relax:
+            from funcs import listinds_to_string, numpy_inds_to_string
+            move = [i+1 for i in range(len(self.s)) 
+                    if movenomove_func(self,i) == True]
+            nomove = [i+1 for i in range(len(self.s)) 
+                      if movenomove_func(self,i) == False]
+            C1  = 'clear ' + listinds_to_string(numpy_inds_to_string(np.array(move)))
+            C2  = 'atom '+ listinds_to_string(numpy_inds_to_string(np.array(nomove)))+' 0 0 0'
+            constraints = [C1,C2]
+            self.fdf_relax(constraints)
+        else:
+            self.fdf(manual_pp = manual_pp)
         self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
+        if self.NEGF_calc:
+            self.write_more_fdf(['TS.Contours.nEq.Eta '+str(eta_negf)+' eV'], name = 'TS_TBT')
+        
+        self.run_analyze_in_dir()
         self.run_siesta_in_dir()
+        if skip_tbtrans:
+            return
+        
+        for i,e in enumerate(self.elecs):
+            e.fdf(manual_pp = manual_pp)
+            e.run_siesta_electrode_in_dir()
+            if i in elec_rsse_idx:
+                if e.elec_SurRSSE == False:
+                    if hasattr(e, 'RSSE_dict'): e.RSSE_dict['Contour'] = tbt_contour
+                    e.Real_space_SE(a1,a2,tile, eta, 0, 0, 2/50, Contour = tbt_contour,dk=dk, mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
+                else:
+                    if hasattr(e, 'SurRSSE_dict'): e.SurRSSE_dict['Contour'] = tbt_contour
+                    nsc = [1 for i in range(3)]; nsc[a2] = 3
+                    e.Real_space_SI(a2, tile, eta, tbt_contour, nsc, dk=dk, mu=self.Chem_Pot[i],
+                                    parallel_E=parallel_E, num_procs = num_procs)
+        
+        self.run_tbt_analyze_in_dir()
+        self.run_tbtrans_in_dir(DOS_GF=DOS_GF, DOS_A=DOS_A,ORBITAL_CURRENT=ORBITAL_CURRENT, Custom=Custom)
+        
+        
+    def self_energy_from_tbtrans(self, E, k):
+        self.save_SE      = True
+        self.save_SE_only = True
+        _kp_tbtrans       = self.kp_tbtrans.copy()
+        self.kp_tbtrans   = None
+        self.manual_tbtrans_kpoint = k
+        self.custom_tbtrans_contour = E
+        self.fdf()
         self.run_tbtrans_in_dir()
+        delattr(self,'manual_tbtrans_kpoint')
+        self.kp_tbtrans = _kp_tbtrans
+        self.save_SE = False
+        self.save_SE_only = False
+        self.custom_tbtrans_contour = None
+        SE,inds = read_SE_from_tbtrans(self.dir + '/' + self.sl+'.TBT.SE.nc')
+        os.remove(self.dir + '/' + self.sl+'.TBT.SE.nc')
+        return SE, inds
+    
+    def tbtrans_H_S_btd_pivot(self):
+        t   = sisl.get_sile(self.dir + '/'+self.sl+'.TBT.nc')
+        p   = t.pivot()
+        btd = t.btd()
+        H = sisl.get_sile(self.dir + '/'+self.sl+'.TSHS').read_hamiltonian()
+        S = sisl.get_sile(self.dir + '/'+self.sl+'.TSHS').read_overlap()
+        self.tbtrans_params_dic = {'H': H,
+                                   'S': S,
+                                   'pivot': p,
+                                   'btd': btd}
+        
+    
+    def solve_qp_equation(self,E, k, its = 10):
+        if not hasattr(self, 'tbtrans_params_dic'):
+            self.tbtrans_H_S_btd_pivot()
+        
+        p        = self.tbtrans_params_dic['pivot']
+        sk       = self.tbtrans_params_dic['S'].Sk(k = k).toarray()
+        hk       = self.tbtrans_params_dic['H'].Hk(k = k).toarray()
+        esk, vsk = np.linalg.eigh(sk[p, :][:, p])
+        lowdin   = vsk.dot(np.diag(1/np.sqrt(esk))).dot(vsk.T.conj())
+        i_lowdin = vsk.dot(np.diag(np.sqrt(esk))).dot(vsk.T.conj())
+        
+        E0   = 0.0
+        E0  += E
+        
+        out1 = np.zeros(its,dtype = np.complex128)
+        out2 = np.zeros(its,dtype = np.complex128)
+        for count in range(its):
+            se, inds = self.self_energy_from_tbtrans(np.array([E0]), k)
+            se       = [se[i][0,0] for i in range(len(se))]
+            
+            inds     = [np.array(inds[i])[:,np.newaxis] for i in range(len(inds))]
+            QP_Ham    = hk.copy()
+            iSE       = np.zeros(hk.shape)
+            for e in range(len(se)):
+                QP_Ham[inds[e], inds[e].T]  += se[e].real
+                iSE    [inds[e], inds[e].T] += se[e].imag
+            QP_Ham = QP_Ham[p][:,p]
+            iSE    =    iSE[p][:,p]
+            QP_Ham = lowdin @ QP_Ham @ lowdin
+            iSE    = lowdin @ iSE @ lowdin
+            e,v    = np.linalg.eigh(QP_Ham)
+            D      = np.abs(e - E0)
+            idx = np.where(D==D.min())
+            idx = idx[0][0]
+            E0  = e[idx]
+            vec = v[:,idx]
+            out1[count] = E0
+            out2[count] = (vec.conj()).dot(iSE).dot(vec)
+        return E0 ,i_lowdin.dot(vec), out1, out2
+    
+    def sisl_sub(self,idx):
+        g = self.to_sisl()
+        g = g.sub(idx)
+        xyz = g.xyz
+        numbers = g.atoms.Z.copy()
+        self.set_struct(self.lat, xyz, numbers)
+    def move_atom(self, idx, T):
+        _T = np.array(T)
+        new_xyz = self.pos_real_space.copy()
+        new_xyz[idx] += _T
+        self.set_struct(self.lat, new_xyz, self.s)
+    
+    def add_buffer(self, elec, N, direc,vac = 0.0):
+        g = self.to_sisl()
+        e = self.elecs[elec].to_sisl()
+        sign = 1 if '+' in e.semi_inf else -1
+        e = e.tile(N,direc).move(sign*e.cell[direc])
+        g = g.add_vacuum(vac, direc)
+        g = g.add(e)
+        xyz = g.xyz
+        self.set_struct(g.cell.copy(), xyz, g.atoms.Z.copy())
+    def pickle(self, filename):
+        """Saves calculator to file"""
+        
+        import pickle as pkl
+        f = open(filename +'.SiP', 'wb')
+        pkl.dump(self, f)
+        f.close()
+    def read_tbt(self, spin = None):
+        if spin is None:
+            return sisl.get_sile(self.dir+'/'+self.sl + '.TBT.nc')
+        elif spin == 'UP':
+            return sisl.get_sile(self.dir+'/'+self.sl + '.TBT_UP.nc')
+        elif spin == 'DN':
+            return sisl.get_sile(self.dir+'/'+self.sl + '.TBT_DN.nc')
+    def add_atom(self, pos, s):
+        N = len(self.s)
+        newpos = np.zeros((N+1,3))
+        news   = np.zeros(N+1,dtype=int)
+        newpos[0:N,:] = self.pos_real_space[:,:]
+        newpos[N, :]  = pos
+        news[0:N]     = self.s[:]
+        news[N  ]     = s
+        self.set_struct(self.lat, newpos, news)
+    
+    def projection(self, Emin, Emax, sub_orbital = [], eigenstates = True, custom_v = None):
+        from Gf_Module.Gf import read_SE_from_tbtrans, Greens_function
+        from Block_matrices.Block_matrices import Blocksparse2Numpy
+        if self.save_SE == False:
+            print('You should save the self energies for a proper projection to be done')
+            error()
+        
+        print('This might only work for DFT')
+        H, S     = self.to_sisl(what = 'fromDFT')
+        SE, inds = read_SE_from_tbtrans( self.dir + '/siesta.TBT.SE.nc')
+        sile     = sisl.get_sile(self.dir + '/siesta.TBT.nc')
+        try:
+            print('Succesfully read fermilevel')
+            E_F = sisl.get_sile(self.dir + '/RUN.fdf').read_fermi_level()
+        except:
+            print('failed to read fermilevel')
+            E_F = 0.0
+        
+        p   = sile.pivot()
+        btd = sile.btd()
+        
+        if len(sub_orbital) != 0:
+            new_pivot = np.array([i for i in p if i in sub_orbital])
+            new_btd   = []
+            cs        = np.cumsum(btd)
+            cs = np.hstack((np.zeros(1), cs)).astype(np.int32)
+            for II in range(len(cs)-1):
+                count = 0
+                for III in p[cs[II]:cs[II+1]]:
+                    if III in sub_orbital:
+                        count+=1
+                new_btd += [count]
+            p   = np.array(new_pivot).astype(np.int32)
+            btd = np.array(new_btd  ).astype(np.int32)
         
         
+        P   = [0]
+        for b in btd:
+            P+= [P[-1] + b ]
         
+        self_Es   = [ SE   ]
+        self_inds = [ inds ]
+        Piv       = [  p   ]
+        Part      = [  P   ]
+        Eg = sile.E
+        kv = sile.k
+        
+        #print(SE[0].shape, Eg.shape)
+        Sys = Greens_function(H, Piv, Part, sisl_S = S) 
+        Sys.set_SE(self_Es, self_inds)
+        Sys.set_eta(0.0)
+        Sys.set_ev(Eg)
+        Sys.set_kv(kv)
+        iG, Gam, Lowdin, Hamiltonian, Overlap, self_energies = Sys.iG(0)
+        
+        slices = Hamiltonian.all_slices
+        
+        Ortho_Hamiltonian    =  Lowdin[0].BDot(Hamiltonian).BDot(Lowdin[0])   # S^-1/2   H   S^-1/2
+        Ortho_SE             = [Lowdin[0].BDot(SE         ).BDot(Lowdin[0])   # S^-1/2 Sigma S^-1/2
+                                for SE in self_energies]
+        
+        #del Hamiltonian, Lowdin, self_energies
+        H  =  Blocksparse2Numpy(Ortho_Hamiltonian,slices)
+        SE = [Blocksparse2Numpy(SE,slices) for SE in Ortho_SE]
+        S  =  Blocksparse2Numpy(Overlap, slices)
+        
+        if eigenstates:
+            e,v = np.linalg.eigh(H)
+            
+            idx = []
+            for i in range(H.shape[-1]):
+                if ((Emin<e[:,:,i])*(e[:,:,i]<Emax)).any():
+                    idx+=[i]
+        
+            e = e[:,:,idx]
+            v = v[:,:,:,idx]
+        elif custom_v is not None:
+            v = custom_v
+        else:
+            print('Could not make sense of your input to the projection rutine')
+            error()
+        
+        def proj(M):
+            return (v.transpose(0,1,3,2).conj())@M@v
+        print(H.shape)
+        H  =  proj(H); Ns = H.shape[-1]
+        Sn = np.zeros(H.shape, dtype = np.complex128); Sn[:,:,np.arange(Ns), np.arange(Ns)] = 1
+        SE =  [proj(se) for se in SE]
+        
+        SiP_proj = SiP(self.lat, self.pos_real_space, s = self.s, 
+                       directory_name = self.dir + '_proj_['+str(Emin)+'; '+str(Emax)+']',
+                       sm = self.sm, sl = self.sl, 
+                       )
+        
+        Dr = SiP_proj.dir
+        sl = SiP_proj.sl
+        
+        # 😄🍊🤮 python can do emojis
+        
+        np.savez(Dr + '/' +sl+'.fakeTBT.npz',
+                 transmission = sile.transmission(),
+                 real_pivot   = sile.pivot(),
+                 real_btd     = sile.btd(),
+                 pivot        = np.arange(Ns),
+                 btd          = [Ns],
+                 E            = sile.E,
+                 _tbtTk_full  = np.array([sile.transmission(kavg = i) 
+                                          for i in range(len(sile.k))]),
+                 kv           = sile.k,
+                 wkpt         = sile.wkpt,
+                 E_F          = E_F
+                 )
+        
+        if self.custom_tbtrans_contour is not None:
+            Cont = self.custom_tbtrans_contour.astype(np.complex128)
+        else:
+            Cont = sile.E.real
+        
+        np.savez(Dr + '/' +sl+'.fakeTBT.SE.npz',
+                 SE   = SE,
+                 inds = np.arange(Ns),
+                 Contour = Cont,
+                 )
+        
+        np.savez(Dr + '/' +sl+'.fakeTSHS.npz',
+                 H = H[:,0,:,:],
+                 S = Sn[:,0,:,:],
+                 k = sile.k)
+        
+        np.savez(Dr + '/'+sl+'Proj2ortho.npz',
+                 projvec  = v,
+                 Overlap  = S,
+                 Lowdin   =  Blocksparse2Numpy(Lowdin[0],slices),
+                 )
+        
+        return SiP_proj
+
+
+    
+    
+
+
+
+
+def load_calculation(Devdir,  old_basis='SZ'):
+    from funcs import read_electrode
+    e = read_electrode(Devdir + '/TS_TBT.fdf')
+    elecs = []
+    for ed in e:
+        l,r,s = np.random.random((3,3)), np.random.random((10,3)), np.arange(10)+1
+        elecs += [SiP(l, r, s, 
+                      directory_name = ed, 
+                      overwrite = 'reuse',
+                      basis = old_basis,
+                      )
+                 ]
+    
+    Dev = SiP(l, r, s, 
+              directory_name = Devdir, 
+              overwrite = 'reuse',
+              basis = old_basis,
+              elecs = elecs
+              )
+    return Dev, elecs
+
+class sisl_replica_for_projection:
+    def __init__(self, sip):
+        self.geom = sip.to_sisl(what = 'geom')
+        self.SiP  = sip
+
+    
+    
+    
+    
+
+

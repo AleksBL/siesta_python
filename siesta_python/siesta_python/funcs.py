@@ -10,6 +10,7 @@ Created on Fri Dec 11 09:59:30 2020
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import sisl
 
 ls = os.listdir
 
@@ -21,13 +22,13 @@ Num2Sym={1:'H', 2: 'He', 3:'Li',
          16:'S',  17:'Cl', 18:'Ar',
          19:'K',  20:'Ca', 21:'Sc',
          22:'Ti', 23:'V',  24:'Cr', 25:'Mn',
-         26:'Fe', 27:'Co', 28:'Ni', 29: 'Cu',
+         26:'Fe', 27:'Co', 28:'Ni', 29:'Cu',
          30:'Zn', 31:'Ga', 32:'Ge', 33:'As', 34:'Se',
          35:'Br', 36:'Kr', 37:'Rb', 38:'Sr', 39:'Y',  40:'Zr',
          41:'Nb', 42:'Mo', 43:'Tc', 44:'Ru', 45:'Rh', 46:'Pd',
          47:'Ag', 48:'Cd', 49:'In', 50:'Sn', 51:'Sb', 52: 'Te',
          53:'I',  54:'Xe', 55:'Cs', 56:'Ba', 
-         79:'Au',
+         77:'Ir', 78:'Pt', 79:'Au',
          
          201: 'mix_1',
          202: 'mix_2',
@@ -56,7 +57,9 @@ Num2Sym={1:'H', 2: 'He', 3:'Li',
          -5:  'B_ghost',
          -6:  'C_ghost',
          -7:  'N_ghost',
+         -79: 'Au_ghost'
          }
+         
 
 
 Sym2Num = {v: k for k, v in Num2Sym.items()}
@@ -71,6 +74,18 @@ def PolyArea(x,y):
     return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
         
 def read_geom_from_fdf(file):
+    #import sisl
+    g = sisl.get_sile(file).read_geometry()
+    r = g.xyz.copy()
+    s = g.atoms.Z.copy()
+    lat = g.cell.copy()
+    R = np.zeros((len(r), 4))
+    R[:,0:3] = r[:,:]
+    R[:,3]   = s[:]
+    return R, lat
+
+
+def oldread_geom_from_fdf(file):
     pos = []
     read_lat = 0
     read_pos_type = 0
@@ -163,11 +178,14 @@ def write_fdf(object,eta = 1e-2):
         f.write('PAO.BasisSize      '+ object.basis+    '\n')
         if object.write_matrices==True:
             f.write('TS.HS.Save True\n')
-        f.write('SaveElectrostaticPotential T\n')
-        f.write('SaveTotalPotential True\n')
+        if object.save_potential_grids:
+            f.write('SaveElectrostaticPotential T\n')
+            f.write('SaveTotalPotential True\n')
         f.write('SCF.Mixer.Method '+object.mixer+'\n')
         f.write('SCF.Mixer.History '+str(object.n_hist)+'\n')
         f.write('SCF.Mix ' + str(object.mix_what) + '\n')
+        f.write('XC.Functional '+object.xc+'\n')
+        f.write('XC.Authors '+object.xc_authors+ '\n')
         
         if object.lua_script != None:
             f.write('LUA.Script ' +object.lua_script +  '\n')
@@ -206,9 +224,25 @@ def write_fdf(object,eta = 1e-2):
         
         if isinstance(object.set_pdos,list)==True:
             f.write('%block ProjectedDensityOfStates\n   ')
-            f.write('  '+str(object.set_pdos[0])+'.0  '+str(object.set_pdos[1])+'.0'+' '+str(object.set_pdos[2])+' '+str(object.set_pdos[3])+' ')
-            f.write('eV\n')
+            f.write('  '+str(object.set_pdos[0])+'.0  '+str(object.set_pdos[1])+'.0'+' '+str(object.set_pdos[2])+' '+str(object.set_pdos[3])+' eV\n')
+            #f.write('eV\n')
+            #f.write('%block ProjectedDensityOfStates\n   ')
+            #f.write('  '+str(object.set_pdos[0])+'.0  '+str(object.set_pdos[1])+'.0'+' '+str(object.set_pdos[2])+' '+str(object.set_pdos[3])+' \n')
+            #f.write('eV\n')
             f.write('%endblock ProjectedDensityOfStates\n')
+            f.write('%block PDOS.kgrid.MonkhorstPack\n')
+            for i in range(3):
+                f.write('  ')
+                for j in range(3):
+                    if i==j:
+                        f.write('  '+str(object.set_pdos[4][i]))
+                    else:
+                        f.write('  '+str(0))
+                    if j==2:
+                        f.write('  '+str(object.k_shift))
+                f.write('\n')
+            f.write("%endblock PDOS.kgrid.MonkhorstPack\n")
+            
     f.close()
     
     with open(object.dir+'/STRUCT.fdf','w') as f:
@@ -299,6 +333,12 @@ def write_fdf(object,eta = 1e-2):
                         f.write('  '+str(object.k_shift))
                 f.write('\n')
             f.write('%endblock kgrid.MonkhorstPack\n')
+        elif hasattr(object,'manual_tbtrans_kpoint'):
+            _KP = object.manual_tbtrans_kpoint
+            f.write('%block TBT.k\n')
+            f.write('list 1\n')
+            f.write('   '+str(_KP[0]) + ' ' +str(_KP[1]) + ' ' + str(_KP[2]) + '\n')
+            f.write('%endblock\n')
     
     with open(object.dir+'/TS_TBT.fdf','w') as f:
         if len(object.buffer_atoms)==0:
@@ -370,22 +410,44 @@ def write_fdf(object,eta = 1e-2):
             it=0
             for CP in Unique_Chem_Pot:
                 let=xyz[it]
-                f.write('%block TS.Contour.C-'+let+'\n')
-                f.write('part circle\n')
-                f.write('   from '+str(CP)+' eV -40. eV to '+str(CP)+' eV -10 kT \n')
-                f.write('     points 25\n')
-                f.write('      method g-legendre\n')
-                f.write('%endblock\n')
+                if object.contour_settings is None:
+                    f.write('%block TS.Contour.C-'+let+'\n')
+                    f.write('part circle\n')
+                    f.write('   from '+str(CP)+' eV -40. eV to '+str(CP)+' eV -10 kT \n')
+                    f.write('     points 25\n')
+                    f.write('      method g-legendre\n')
+                    f.write('%endblock\n')
+                    
+                    f.write('%block TS.Contour.T-'+let+'\n')
+                    f.write('part tail\n')
+                    f.write('   from prev to inf\n')
+                    f.write('     points 10\n')
+                    f.write('      method g-fermi\n')
+                    f.write('%endblock\n')
+                else:
+                    CS = object.contour_settings[object.Chem_Pot.index(CP)]
+                    v1 = CS['V1']
+                    v2 = CS['V2']
+                    np1= CS['Np_1']
+                    np2= CS['Np_2']
+                    
+                    f.write('%block TS.Contour.C-'+let+'\n')
+                    f.write('part circle\n')
+                    f.write('   from '+str(CP)+' eV '+v1+' eV to '+str(CP)+' eV '+v2+' kT \n')
+                    f.write('     points '+np1+'\n')
+                    f.write('      method g-legendre\n')
+                    f.write('%endblock\n')
+                    
+                    f.write('%block TS.Contour.T-'+let+'\n')
+                    f.write('part tail\n')
+                    f.write('   from prev to inf\n')
+                    f.write('     points '+np2+'\n')
+                    f.write('      method g-fermi\n')
+                    f.write('%endblock\n')
                 
-                f.write('%block TS.Contour.T-'+let+'\n')
-                f.write('part tail\n')
-                f.write('   from prev to inf\n')
-                f.write('     points 10\n')
-                f.write('      method g-fermi\n')
-                f.write('%endblock\n')
                 it+=1
             
-            if object.NEGF_calc==True:    
+            if object.NEGF_calc==True:
                 f.write('%block TS.Contours.nEq\n')
                 f.write('  neq\n')
                 f.write('%endblock TS.Contours.nEq\n')
@@ -619,6 +681,14 @@ def read_total_energy(object):
                 Res=float(l[20:])
                 break
     return Res
+def read_fermi_level(object):
+    Res=None
+    with open(object.dir+'/'+'RUN.out','r') as f:
+        for l in f:
+            if 'siesta:' in l and 'Fermi =' in l:
+                Res=float(l[25:])
+                break
+    return Res
 
 def hist_distances(pos,cutoff=3):
     n=pos.shape[0]
@@ -767,7 +837,6 @@ def read_pdos_file(fname):
                 PDOS+=[np.fromstring(l,sep=' ')]
     return np.array(PDOS)
 
-
 def writerun_denchar(object):
     with open(object.dir + '/run_denchar.fdf', 'w') as f:
         f.write('SystemLabel ' + object.sl + '\n' )
@@ -795,7 +864,7 @@ def read_siesta_relax(fname):
     species_dict = {}
     
     if '.XV' in fname:
-        import sisl
+        #import sisl
         g = sisl.io.siesta.xvSileSiesta(fname).read_geometry()
         xyz = g.xyz
         t   = g.atoms.Z
@@ -970,7 +1039,7 @@ def get_random_from_name(name,done_list, return_name = False):
 
 
 def plotamok(Directory):
-    import sisl
+    #import sisl
     from sisl.viz.plotly import Plot
     try:
         t  = sisl.get_sile('siesta.TBT.nc')
@@ -1009,6 +1078,14 @@ def recreate_old_calculation(Dir,electrode = False):
     elecs = [read_geom_from_fdf(e[i] + '/STRUCT.fdf') for i in range(len(e))]
     
     return device,elecs
+
+
+
+    
+    
+
+
+
 
 def SC(p):
     plt.scatter(p[:,0], p[:,1])
@@ -1312,10 +1389,53 @@ def interpolate_and_fft(x,y,N):
     from scipy.interpolate import interp1d
     xx = np.linspace(x.min(), x.max(), N)
     f  = interp1d(x,y)
-    yy =f(xx)
+    yy = f(xx)
     yy = np.pad(yy,(N//2, N//2))
     dx = xx[1] - xx[0]
     return np.fft.rfft(yy), np.fft.rfftfreq(2*N, dx)
 
 
+def pyinds2siesta(idx):
+    return listinds_to_string(numpy_inds_to_string(idx+1))
+
+def get_btd_partition_of_matrix(_csr, start):
+    from scipy.sparse.csgraph import reverse_cuthill_mckee as rcm
+    from scipy import sparse as sp
+    assert _csr.shape[0] == _csr.shape[1]
+    p = rcm(_csr)
+    no = _csr.shape[0]
+    csr = _csr[p,:][:,p]
+    Part = [0, start]
+    x0   = Part[-1]
+    while x0<no:
+        #print(x0)
+        sl = slice(Part[-2], Part[-1])
+        coup = csr[sl,sl.stop:]
+        i,j,v = sp.find(coup)
+        if len(i)==0:
+            break
+        else:
+            x0 = np.max(j)+1
+            Part += [Part[-1] + x0]
+    btd = [Part[i+1] - Part[i] for i in range(len(Part)-1)]
+    return p, btd, Part
+
+def zigzag_g(bond = 1.42):
+    #import sisl
+    
+    g = sisl.geom.graphene(orthogonal = True, bond=bond).rotate(90,[0,0,1])
+    cell= g.cell.copy()
+    g.cell[0] = cell[1]
+    g.cell[1] = cell[0]
+    g.cell[0]  *= -1
+    g.xyz[:,0] *= -1
+    return g
+
+def num_neq_contour_points(Chem_Pot, kT):
+    emin = min(Chem_Pot) - 5 * kT
+    emax = max(Chem_Pot) + 5 * kT
+    return np.arange(emin, emax, 0.01).shape[0]-1
+
+def readH(file):
+    return sisl.get_sile(file).read_hamiltonian()
 
