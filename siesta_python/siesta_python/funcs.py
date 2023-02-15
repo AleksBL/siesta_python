@@ -1439,3 +1439,29 @@ def num_neq_contour_points(Chem_Pot, kT):
 def readH(file):
     return sisl.get_sile(file).read_hamiltonian()
 
+def check_distances(r, cell = None, tol = 0.3):
+    overlapping_atoms = False
+    if cell is None:
+        dij = np.linalg.norm(r[:,None,:] - r[None,:,:],axis=2)
+        if (np.sum(dij<tol, axis=1)>1).any():
+            overlapping_atoms = True
+    else:
+        r33 = np.zeros((len(r)*9, 3))
+        count = 0
+        na = len(r)
+        for i in range(-1,2):
+            for j in range(-1,2):
+                r33[count * na : (count + 1)*na, :] = r + cell[0]*i +cell[1]*j
+        dij = np.linalg.norm(r[:,None,:] - r[None,:,:],axis=2)
+        if (np.sum(dij<tol, axis=1)>1).any():
+            overlapping_atoms = True
+    return overlapping_atoms
+
+def get_twist(geom,s1,s2):
+    v1 = geom.xyz[s1[1]]- geom.xyz[s1[0]]
+    v2 = geom.xyz[s1[1]]- geom.xyz[s1[0]]
+    v1 *= 1/np.linalg.norm(v1)
+    v2 *= 1/np.linalg.norm(v2)
+    return np.arccos(v1.dot(v2))
+
+    

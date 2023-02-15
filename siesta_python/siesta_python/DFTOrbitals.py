@@ -12,7 +12,7 @@ import becke
 from time import time
 from scipy.integrate import tplquad
 import quadpy
-from TimedependentTransport.HartreeFromDensity import make_density,matrixelementsoffield#, make_density_jit
+from Zandpack.HartreeFromDensity import make_density,matrixelementsoffield#, make_density_jit
 
 
 
@@ -219,6 +219,46 @@ class DFTOrbitals:
                      ]
         
         return becke.electronic_dipole(atoms, fi, fj)
+    
+    def becke_nuclear(self, i,j, eps = 1e-5, U = None):
+        v  = eps*np.ones(3)
+        Ri = self.get_pos(i)-0.5*v
+        Rj = self.get_pos(j)+0.5*v
+        if U is None:
+            
+            def fi(x,y,z):
+                s = x.shape
+                r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
+                return self.get_func(i)(r).reshape(s)
+            def fj(x,y,z):
+                s = x.shape
+                r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Rj
+                return self.get_func(j)(r).reshape(s)
+            atoms = [(1, Ri),
+                     (1, Rj),
+                     ]
+        else:
+            Ud = U.conj().T
+            def fi(x,y,z):
+                s = x.shape
+                r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
+                res = np.zeros(x.ravel().shape)
+                for uij in Ud[i]:
+                    res += uij*self.get_func(i)(r)
+                return res.reshape(s)
+            def fj(x,y,z):
+                s = x.shape
+                r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Rj
+                res = np.zeros(x.ravel().shape)
+                for uij in U[j]:
+                    res += uij*self.get_func(j)(r)
+                return res.reshape(s)
+            atoms = [(1, Ri),
+                     (1, Rj),
+                     ]
+        
+        return becke.nuclear(atoms, fi, fj)
+    
     
     def becke_new_overlap(self, i,j, eps = 1e-5, U = None, vac = 10.0, quadpy_N = None):
         v  = eps*np.ones(3)

@@ -1,5 +1,14 @@
+""""
+Code for finding the coulomb integrals that need evaluation.
+using the symmetries of the 2-electron integrals
+
+"""
+
 from numba import njit
 import numpy as np
+
+
+
 
 @njit
 def op1(t):

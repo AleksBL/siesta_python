@@ -139,6 +139,7 @@ if options['mode'] == 'FourCenter':
                       verbose = int(options['verbose']),
                       backend = options['backend']
                       )(jl.delayed(EP)(t) for t in Indices)
+    
     def nopiv2piv(t_idx):
         return (np.where(d_inds == t_idx[0])[0][0],
                 np.where(d_inds == t_idx[1])[0][0],
@@ -153,11 +154,9 @@ if options['mode'] == 'FourCenter':
              Vals = Vals,
              Device_indices = d_inds,
              AfterPivInds   = AfterPivInds)
-    
-    
 
 if options['mode']=='dipole':
-    print('Finding dipole moments of orbitals')
+    print('Finding dipole matrix elements of orbitals')
     try:
         d_inds = np.load('FCI_device_inds.npy')
     except:
@@ -177,17 +176,35 @@ if options['mode']=='dipole':
             dipole_matrix_elements = mat)
 
 if options['mode']=='overlap':
-    print('Finding dipole moments of orbitals')
+    print('Finding overlap matrix elements of orbitals')
     try:
         d_inds = np.load('FCI_device_inds.npy')
     except:
         d_inds = np.arange(no)
         
-    mat = np.zeros((len(d_inds), len(d_inds),3), dtype = np.complex128)
+    mat = np.zeros((len(d_inds), len(d_inds)), dtype = np.complex128)
     for _i,i in enumerate(d_inds):
         for _j,j in enumerate(d_inds):
             mat[_i, _j] = Orbitals.becke_overlap(i, j)
     np.savez(options['OutFile'],
             Device_indices = d_inds,
             overlap_matrix_elements = mat)
+
+
+if options['mode']=='nuclear':
+    from tqdm import tqdm
+    
+    print('Finding Nuclear-electronic attraction matrix elements of orbitals')
+    try:
+        d_inds = np.load('FCI_device_inds.npy')
+    except:
+        d_inds = np.arange(no)
+        
+    mat = np.zeros((len(d_inds), len(d_inds)), dtype = np.complex128)
+    for _i,i in tqdm(enumerate(d_inds)):
+        for _j,j in enumerate(d_inds):
+            mat[_i, _j] = Orbitals.becke_nuclear(i, j)
+    np.savez(options['OutFile'],
+             Device_indices = d_inds,
+             nuclear_matrix_elements = mat)
     

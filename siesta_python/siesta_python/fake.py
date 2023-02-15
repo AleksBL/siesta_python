@@ -48,7 +48,7 @@ class fakeTBT:
 
 class fakeHS:
     # Meant to be able to emulate a sisl H.Hk(k=k)/S.Sk(k=k) call
-    # Probably slow as salty snail
+    # Probably slow as salty snail, its meant for intermediate linking, not performance
     # No checks on actual matrix elements, when ever or not its actually is a valid overlap
     # matrix / Hamiltonian
     # 
@@ -82,9 +82,29 @@ def read_fakeSE_from_tbtrans(file):
     # Pendent to read_SE_from_tbtrans found in Gf_Module.Gf file
     # The fakeTBT.SE files are just dense numpy arrays of n_eig dimension,
     # no matrix elements are left out
+    
     npz = np.load(file)
-    SE = npz['SE']
-    _inds = npz['inds']
-    SE = [se for se in SE]
-    inds = [_inds.copy() for _ in SE]
-    return SE, inds
+    if 'Mode2' not in npz.files:
+        SE = npz['SE']
+        _inds = npz['inds']
+        SE = [se for se in SE]
+        inds = [_inds.copy() for _ in SE]
+        return SE, inds
+    else:
+        cond = True
+        it   = 0
+        SE = []
+        inds = []
+        while cond:
+            try:
+                SE   += [npz['SE_' + str(it)] ]
+                inds += [npz['inds_' + str(it)] ]
+                it+=1
+            except:
+                cond = False
+            
+        return SE,inds
+
+        
+        
+

@@ -907,7 +907,8 @@ class SiP:
                       dk = 1000.0, 
                       mu = None,
                       parallel_E = False,
-                      num_procs  = 4
+                      num_procs  = 4,
+                      write_to_tbtrans = True,
                       ):
 
         """
@@ -934,10 +935,12 @@ class SiP:
             E = Contour.copy()
         
         H_minimal = sisl.get_sile(self.dir + '/' + self.sl + '.'+ending).read_hamiltonian()
-        print(H_minimal)
+        #print(H_minimal)
+        #print(ax_decimation, ax_integrate, supercell)
         RSSE      = sisl.RealSpaceSE(H_minimal, ax_decimation, ax_integrate, supercell, dk = dk)
         H_elec, elec_indices = RSSE.real_space_coupling(ret_indices=True)
-        print(H_elec.no)
+        #print(H_elec.no)
+        
         H_elec.write(self.dir + '/'+ self.sl + '.'+ending)
         
         H = RSSE.real_space_parent()
@@ -946,7 +949,7 @@ class SiP:
         indices = np.delete(indices, elec_indices)
         indices = np.concatenate([elec_indices, indices])
         np.save(self.dir + '/RS_Coupling_pos', H.xyz[elec_indices])
-        np.save(self.dir + '/RS_Coupling_specie', H.toASE().numbers[elec_indices])
+        np.save(self.dir + '/RS_Coupling_specie', H.atoms.Z[elec_indices])
         if only_couplings:
             return 
         
@@ -956,9 +959,16 @@ class SiP:
         
         if parallel_E:
             import joblib as Jl
+            if write_to_tbtrans:
+                _bulk = True
+                _coupling = True
+            else:
+                _bulk = False
+                _coupling = True
             global SE_func # for multiprocessing backend
             def SE_func(e):
-                return e, RSSE.self_energy(e, bulk=True, coupling=True)
+                return e, RSSE.self_energy(e, bulk=_bulk, coupling=_coupling)
+            
             results = Jl.Parallel(n_jobs=num_procs,
                                   backend = joblib_backend,
                                   verbose = 10)(Jl.delayed(SE_func)(e + 1j*eta) for e in E)
@@ -980,7 +990,9 @@ class SiP:
                 f.write_self_energy(SeHSE)
         
         self.RSSE_Energy_from_to = (Emin, Emax)
-    
+        if write_to_tbtrans==False and parallel_E:
+            return ResDic
+        
     def Real_space_SI(self, ax_integrate, supercell, eta, Contour,
                       nsc = (1,3,1), 
                       ending = 'TSHS',
@@ -1059,7 +1071,7 @@ class SiP:
         #indices = np.delete(indices, elec_indices)
         #indices = np.concatenate([elec_indices, indices])
         np.save(self.dir + '/RS_Coupling_pos', H.xyz[elec_indices])
-        np.save(self.dir + '/RS_Coupling_specie', H.toASE().numbers[elec_indices])
+        np.save(self.dir + '/RS_Coupling_specie', H.atoms.Z[elec_indices])
         if only_couplings:
             return
         
@@ -1297,7 +1309,8 @@ class SiP:
     
     def to_sisl(self, what = 'geom', R = 3.0):
         if what == 'geom':
-            A = sisl.Geometry.fromASE(self.toASE())
+            
+            A = sisl.Geometry(xyz = self.pos_real_space, sc = self.lat, atoms = self.s)
             for i in range(len(A._atoms)):
                 
                 A._atoms[i] = sisl.Atom(A._atoms[i].Z, R = R)
@@ -1311,6 +1324,19 @@ class SiP:
         
         elif what == 'sile':
             return sisl.get_sile(self.dir + '/RUN.fdf')
+        elif what == 'TSHS':
+            H = sisl.get_sile(self.dir + '/'+self.sl+'.TSHS').read_hamiltonian()
+            S = sisl.get_sile(self.dir + '/'+self.sl+'.TSHS').read_overlap()
+            return H, S
+    
+    def read_TSHS(self, front = None):
+        if front is None:
+            name = self.sl
+        else:
+            name = front
+        return sisl.get_sile(self.dir+'/'+name+'.TSHS').read_hamiltonian()
+    
+    
     
     def to_TB_model(self, fH, fS):
         h = self.to_sisl(what = 'geom')
@@ -1865,28 +1891,31 @@ class SiP:
     
     def ase_visualise(self):
         from ase.visualize import view
-        view(self.to_sisl().toASE())
+        view(self.toASE())
     
     def run_TS_RSSE_calc(self, tile, tbt_contour, a1 = 0,a2 = 1, 
-                         eta = 0.0, Contour = None, 
-                         fix_dir = 'C',
+                         eta      = 0.0, 
+                         Contour  = None, 
+                         fix_dir  = 'C',
                          eta_negf = 0.01,
                          buffer_cond = None,
-                         DOS_GF= False, 
-                         DOS_A=False, 
-                         DOS_A_ALL=False,
+                         DOS_GF    = False, 
+                         DOS_A     = False, 
+                         DOS_A_ALL = False,
                          ORBITAL_CURRENT=False, 
-                         Custom = [],
+                         Custom    = [],
                          manual_pp = [],
-                         relax = False,
+                         relax     = False,
                          movenomove_func= None,
                          initial_num_E = 45,
                          skip_tbtrans = False,
-                         only_fail = False,
-                         dk = 1000.0,
-                         dk_fail = 10.0,
+                         only_fail  = False,
+                         dk         = 1000.0,
+                         dk_fail    = 10.0,
                          parallel_E = False,
-                         num_procs = 4,
+                         num_procs  = 4,
+                         reuse_fdf  = False,
+                         mix_ps = [] # list of several [(at1_i, at2_i), frac_i, mix_i]
                          ):
         """ 
             tile: number of supercells, may also be set with the RSSE/SurRSSE dictionaries
@@ -1898,6 +1927,7 @@ class SiP:
             eta_negf: broadening on the greens function calculation for the NEGF calculation in the small window
             ...... document this
             dk: real space integration fineness
+            
         """
         
         elec_rsse_idx = [i for i in range(len(self.elecs)) if self.elecs[i].elec_RSSE]
@@ -1905,7 +1935,14 @@ class SiP:
             Contour = np.linspace(-1,1,initial_num_E)+1j*0.1 # Dummy contour
         self.custom_tbtrans_contour = tbt_contour
         for i,e in enumerate(self.elecs):
-            e.fdf(manual_pp = manual_pp)
+            if reuse_fdf == False:
+                e.fdf(manual_pp = manual_pp)
+            elif isinstance(reuse_fdf, list):
+                if reuse_fdf[i] == False:
+                    e.fdf(manual_pp = manual_pp)
+            else:
+                pass
+            
             e.run_siesta_electrode_in_dir()
             if i in elec_rsse_idx:
                 if e.elec_SurRSSE == False:
@@ -1925,7 +1962,14 @@ class SiP:
         self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
         if self.NEGF_calc:
             self.write_more_fdf(['TS.Contours.nEq.Eta '+str(eta_negf)+' eV'], name = 'TS_TBT')
-        
+        if len(mix_ps)>0:
+            for commands in mix_ps:
+                at1, at2 = commands[0]
+                frac     = commands[1]
+                name     = commands[2]
+                self.ps_mixer([ at1, at2], frac, name)
+            self.dump_pseudo_list_to_struct()
+            
         self.run_analyze_in_dir()
         self.run_siesta_in_dir()
         if only_fail:
@@ -1935,7 +1979,14 @@ class SiP:
         print('\n Read contour with shape ', TS_Contour.shape, '\n')
         TS_Contour = TS_Contour[:,0] + 1j * TS_Contour[:,1] # get the contour transiesta asks for
         for i,e in enumerate(self.elecs):
-            e.fdf(manual_pp = manual_pp)
+            if reuse_fdf == False:
+                e.fdf(manual_pp = manual_pp)
+            elif isinstance(reuse_fdf, list):
+                if reuse_fdf[i] == False:
+                    e.fdf(manual_pp = manual_pp)
+            else:
+                pass
+            
             e.run_siesta_electrode_in_dir()
             if i in elec_rsse_idx:
                 if e.elec_SurRSSE == False:
@@ -1969,17 +2020,31 @@ class SiP:
             self.fdf_relax(constraints)
         else:
             self.fdf(manual_pp = manual_pp)
-        self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
-        if self.NEGF_calc:
-            self.write_more_fdf(['TS.Contours.nEq.Eta '+str(eta_negf)+' eV'], name = 'TS_TBT')
-        
+            self.write_more_fdf(['TS.Hartree.Fix -'+fix_dir], name = 'TS_TBT')
+            if self.NEGF_calc:
+                self.write_more_fdf(['TS.Contours.nEq.Eta '+str(eta_negf)+' eV'], name = 'TS_TBT')
+            if len(mix_ps)>0:
+                for commands in mix_ps:
+                    at1, at2 = commands[0]
+                    frac     = commands[1]
+                    name     = commands[2]
+                    self.ps_mixer([ at1, at2 ], frac, name)
+                self.dump_pseudo_list_to_struct()
+
         self.run_analyze_in_dir()
         self.run_siesta_in_dir()
         if skip_tbtrans:
             return
         
         for i,e in enumerate(self.elecs):
-            e.fdf(manual_pp = manual_pp)
+            if reuse_fdf == False:
+                e.fdf(manual_pp = manual_pp)
+            elif isinstance(reuse_fdf, list):
+                if reuse_fdf[i] == False:
+                    e.fdf(manual_pp = manual_pp)
+            else:
+                pass
+            
             e.run_siesta_electrode_in_dir()
             if i in elec_rsse_idx:
                 if e.elec_SurRSSE == False:
@@ -2247,7 +2312,463 @@ class SiP:
                  )
         
         return SiP_proj
+    
+    def Hubbard_electrode(self,up0,dn0, SE = False, add_spin = True, 
+                          U = 3.0, kT = 0.025, kp = [102,1,1],
+                          n0 = None,):
+        from hubbard import HubbardHamiltonian,density
+        H0     = sisl.get_sile(self.dir+'/'+self.sl+'.TSHS').read_hamiltonian()
+        if add_spin:
+            H0 = H0.transform(spin = sisl.Spin('polarized'))
+        MFH_H0 = HubbardHamiltonian(H0, U=U, nkpt=kp, kT=kT)
+        MFH_H0.set_polarization(up0, dn = dn0)
+        dn = MFH_H0.converge(density.calc_n, tol=1e-10)
+        dist = sisl.get_distribution('fermi_dirac', smearing=kT)
+        Ef_elec = MFH_H0.H.fermi_level(MFH_H0.mp, q=MFH_H0.q, distribution=dist)
+        print("Electrode Ef = ", Ef_elec)
+        # Shift each electrode with its Fermi-level and write it to netcdf file
+        MFH_H0.H.shift(-Ef_elec)
+        MFH_H0.H.write(self.dir+'/Hubbard_'+self.sl+'.TSHS')
+        np.save(self.dir+'/Density.npy',MFH_H0.n)
+        np.save(self.dir+'/Shift.npy', -Ef_elec)
+        self.Hubbard_electrode = 'Yes'
+    
+    def calculate_hubbard_transport(self, Contour, start = 10):
+        from sisl import RecursiveSI
+        from funcs import get_btd_partition_of_matrix
+        from scipy.sparse import csr_matrix
+        import matplotlib.pyplot as plt
+        
+        SEs = []
+        def translate(dr):
+            if '-a1' in e.semi_inf: return '-A'
+            if '+a1' in e.semi_inf: return '+A'
+            if '-a2' in e.semi_inf: return '-B'
+            if '+a2' in e.semi_inf: return '+B'
+            if '-a3' in e.semi_inf: return '-C'
+            if '+a3' in e.semi_inf: return '+C'
+            
+        for e in self.elecs:
+            if hasattr(e, 'Hubbard_electrode'):
+                SEs += [RecursiveSI(e.read_TSHS('Hubbard_'+e.sl), 
+                                    translate(e.semi_inf)) ]
+            else:
+                SEs += [RecursiveSI(e.read_TSHS(e.sl), 
+                                    translate(e.semi_inf)) ]
+        
+        
+        
+        eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
+                   for se in SEs]
+        eSEs_s1 = [np.array([se.self_energy(e,spin=1) for e in Contour])
+                   for se in SEs]
+        eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
+                   for i in  range(len(SEs))]
+        
+        Hd      = self.read_TSHS()
+        SE_inds = []
+        for i,e in enumerate(self.elecs):
+            se_inds = []
+            for j in self.elec_inds[i]:
+                Is = Hd.a2o(j)
+                if isinstance(Is,np.int64): se_inds += [Is]
+                if isinstance(Is,list):     se_inds += Is
+            SE_inds += [se_inds]
+        nonzeros = Hd.Hk()
+        for inds in SE_inds:
+            ones = csr_matrix((Hd.no, Hd.no))
+            ones[np.array(inds)[:,None],np.array(inds)[None,:]] = 1
+            nonzeros+=ones
+        nonzeros = abs(nonzeros)
+        piv,btd,part = get_btd_partition_of_matrix(nonzeros, start)
+        kw_dict   = {}
+        for i in range(len(SEs)):
+            kw_dict.update({'SE_'+str(i):eSEs[i]})
+            kw_dict.update({'inds_'+str(i):SE_inds[i]})
+        
+        np.savez(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
+                 **kw_dict,
+                 Contour = Contour,
+                 Mode2=1
+                 )
+        
+        H = np.vstack([Hd.Hk(spin=0).toarray()[None,:,:],
+                       Hd.Hk(spin=1).toarray()[None,:,:]
+                      ])
+        
+        S = np.vstack([Hd.Sk(spin=0).toarray()[None,:,:],
+                       Hd.Sk(spin=1).toarray()[None,:,:]
+                      ])
+        
+        kv = np.array([[0,0          , 0],
+                       [0,0.123456789, 0]])
+        
+        np.savez(self.dir + '/' +self.sl+'.fakeTSHS.npz',
+                 H = H,
+                 S = S,
+                 k = kv)
+        
+        #replace the real file with the fake
+        os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
+        
+        
+        G0 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 0).toarray()
+        G1 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 1).toarray()
+        SEf0 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
+        SEf1 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
+        for i in range(len(SEs)):
+            idx = np.array(SE_inds[i])
+            #print(eSEs_s0[i].shape,SEf0[i,:, idx[:,None], idx[None,:]].shape)
+            SEf0[i][:, idx[:,None], idx[None,:]] = eSEs_s0[i]
+            SEf1[i][:, idx[:,None], idx[None,:]] = eSEs_s1[i]
+        G0 -= SEf0.sum(axis=0)
+        G1 -= SEf1.sum(axis=0)
+        G0 = np.linalg.inv(G0)
+        G1 = np.linalg.inv(G1)
+        Tij0 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
+        Tij1 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
+        
+        for i in range(len(SEs)):
+            Gam0i = 1j * (SEf0[i] - SEf0[i].conj().transpose(0,2,1) )
+            Gam1i = 1j * (SEf1[i] - SEf1[i].conj().transpose(0,2,1) )
+            for j in range(i+1,len(SEs)):
+                Gam0j       = 1j * (SEf0[j] - SEf0[j].conj().transpose(0,2,1) )
+                Gam1j       = 1j * (SEf1[j] - SEf1[j].conj().transpose(0,2,1) )
+                Tij0[:,i,j] = np.trace(Gam0i@G0@Gam0j@(G0.conj().transpose(0,2,1)), axis1=1,axis2=2)
+                Tij1[:,i,j] = np.trace(Gam1i@G1@Gam1j@(G1.conj().transpose(0,2,1)), axis1=1,axis2=2)
+        
+        transmission = Tij0[:,0,1]+Tij1[:,0,1]
+        
+        np.savez(self.dir + '/' +self.sl+'.fakeTBT.npz',
+                 transmission = transmission,
+                 real_pivot   = piv,
+                 real_btd     = btd,
+                 pivot        = piv,
+                 btd          = btd,
+                 E            = Contour.real,
+                 _tbtTk_full  = np.array([Tij0[:,0,1], 
+                                          Tij1[:,0,1]]),
+                 kv           = kv,
+                 wkpt         = [1, 1],
+                 E_F          = 0.0
+                 )
+        
+    
+    def calculate_2E_RSSE(self, Ev, tdir=0, kdir=1, n_jobs = 4, tol = (1e-6, 1e-4)):
+        from SelfEnergyCalculators import Decimation
+        from siesta_optics.LinearResponse import sisl2array
+        from siesta_optics.LinearResponse import sisl2coup
+        
+        if len(self.elecs)!=2:
+            print('This function can only use two electrodes!')
+            return
+        
+        Hm, Sm = self.elecs[0].to_sisl('TSHS')
+        Hp, Sp = self.elecs[1].to_sisl('TSHS')
+        Hd, Sd = self.to_sisl('TSHS')
+        
+        self.Deci = Decimation
+        
+        ny  = Hd.nsc[kdir]//2
+        #print(ny)
+        idx_e1, idx_e2 = self.elec_inds
+        
+        _oidx_e1  = [ list(Hd.a2o(i)) if isinstance(Hd.a2o(i), np.ndarray) else [Hd.a2o(i)] for i in idx_e1 ]
+        oidx_e1   = []
+        for u in _oidx_e1:
+            oidx_e1 += u
+        
+        _oidx_e2  = [ list(Hd.a2o(i)) if isinstance(Hd.a2o(i), np.ndarray) else [Hd.a2o(i)] for i in idx_e2 ]
+        oidx_e2   = []
+        for u in _oidx_e2:
+            oidx_e2 += u
+        
+        oidx_d   = list(set([i for i in range(Hd.no)]) - set(oidx_e1) - set(oidx_e2))
+        _eidx    = (list(idx_e1)  + list(idx_e2))
+        _oeidx   = (list(oidx_e1) + list(oidx_e2))
+        _didx = [i for i in range(Hd.na) if i not in _eidx ]
+        _odidx= [i for i in range(Hd.no) if i not in _oeidx]
+        Hdsub    = Hd.sub(_didx)
+        Sdsub    = Sd.sub(_didx)
+        #print(Hdsub.shape)
+        if len(self.buffer_atoms)!=0:
+            print('Buffer atoms present')
+            oidx_d = [i for i in oidx_d if i not in self.buffer_atoms]
+            Hdsub    = Hdsub.remove(self.buffer_atoms)
+            Sdsub    = Sdsub.remove(self.buffer_atoms)
+        
+        noL, noD, noR  = Hm.no, Hdsub.no, Hp.no
+        
+        ArL = np.zeros((4, Hd.nsc[kdir], noL, noL),dtype=np.complex128)
+        ArD = np.zeros((2, Hd.nsc[kdir], noD, noD),dtype=np.complex128)
+        ArR = np.zeros((4, Hd.nsc[kdir], noR, noR),dtype=np.complex128)
+        Vdl = np.zeros((   Hd.nsc[kdir], noD, noL),dtype=np.complex128)
+        Vdr = np.zeros((   Hd.nsc[kdir], noD, noR),dtype=np.complex128)
+        Sdl = np.zeros((   Hd.nsc[kdir], noD, noL),dtype=np.complex128)
+        Sdr = np.zeros((   Hd.nsc[kdir], noD, noR),dtype=np.complex128)
+        
+        if kdir==1:
+            y = np.array([0,1,0])
+            Tv= np.array([1,0,0])
+        else:
+            y = np.array([1,0,0])
+            Tv= np.array([0,1,0])
+        #print(y)
+        for ic, i in enumerate(range(-ny, ny+1)):
+            ArL[0,ic],ArL[2,ic]  = sisl2coup(Hm, Sm, i*y + 0*Tv)
+            ArL[1,ic],ArL[3,ic]  = sisl2coup(Hm, Sm, i*y - 1*Tv)
+            
+            ArR[0,ic],ArR[2,ic]  = sisl2coup(Hp, Sp, i*y + 0*Tv)
+            ArR[1,ic],ArR[3,ic]  = sisl2coup(Hp, Sp, i*y + 1*Tv)
+            
+            ArD[0,ic], ArD[1,ic] = sisl2coup(Hdsub, Sdsub, i*y)
+            
+            _h,_s = sisl2coup(Hd, Sd, i*y)
+            Vdl[ic], Sdl[ic] = _h[_odidx,:][:,oidx_e1], _s[_odidx,:][:,oidx_e1]
+            Vdr[ic], Sdr[ic] = _h[_odidx,:][:,oidx_e2], _s[_odidx,:][:,oidx_e2]
+        
+        # assert np.allclose(Vdl[0], Vdl[2].T)
+        # assert np.allclose(Vdr[0], Vdr[2].T)
+        self.RSSEdata = {'Ev':Ev,
+                         'ArL': ArL,
+                         'ArR': ArR,
+                         'ArD': ArD,
+                         'Vdl': Vdl,
+                         'Vdr': Vdr,
+                         'Sdr': Sdr,
+                         'Sdl': Sdl
+                         }
+        
+        
+        assert np.allclose(ArD[:,0], ArD[:,2].transpose(0,2,1))
+        assert np.allclose(ArR[[0,2],0], ArR[[0,2],2].transpose(0,2,1))
+        assert np.allclose(ArL[[0,2],0], ArL[[0,2],2].transpose(0,2,1))
+        
+        # return ArL, ArR, ArD, Vdl, Vdr, Sdl, Sdr
+        RES = self.Deci.par_integrate_GkLDR(Ev, ArL, ArD, ArR, Vdl, Vdr, Sdl, Sdr,
+                                            n_jobs=n_jobs, tol=tol)
+        HR  = ArD[0,ny]
+        SR  = ArD[1,ny]
+        
+        SER = Ev[:, None, None]*SR-HR-np.linalg.inv([res[0] for res in RES])
+        coupling_idx = np.unique(np.where((np.abs(SER)>1e-10).sum(axis=0))[0])
+        SER = SER[:,coupling_idx,:][:,:,coupling_idx]
+        
+        np.savez(self.dir+'/RSSE.npz',
+                 RealspaceSE = SER,
+                 Dvcxyz      = self.pos_real_space,
+                 coupling_idx= coupling_idx,
+                 RealspaceG  = [res[0] for res in RES],
+                 Ev          = Ev,
+                 HR          = HR,
+                 SR          = SR,
+                 e1_atoms    = idx_e1,
+                 e2_atoms    = idx_e2,
+                 e1_orbs     = oidx_e1,
+                 e2_orbs     = oidx_e2,
+                 )
+        
+    def from_custom(self,H, SEs, Ev, kv, S = None, SE_inds = None, E_F = 0.0, eta = 1e-3):
+        """
+            H: Hamiltonian (nk, no, no) array.
+            SEs: list of (nk, nE, no, no) array with self-energies, 
+                 one for each electrode.
+            E  : (nE, ) array with energy points where self-energies have
+                 been sampled.
+        """
+        
+        if (Ev.imag==0.0).all():
+            E = Ev + 1j * eta
+        else:
+            E = Ev
+        
+        nk, no    = H.shape[0], H.shape[1]
+        nE        = len(E)
+        n_lead    = len(SEs)
+        kw_dict   = {}
+        for i in range(len(SEs)):
+            kw_dict.update({'SE_'+str(i):SEs[i]})
+            if isinstance(SE_inds,list):
+                kw_dict.update({'inds_'+str(i):SE_inds[i]})
+            else:
+                kw_dict.update({'inds_'+str(i):np.arange(no)})
+        
+        np.savez(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
+                 **kw_dict,
+                 Contour = E,
+                 Mode2=1
+                 )
+        if S is None:
+            _S = H.copy()
+            _S[:,:,:] = 0.0
+            for i in range(no):
+                _S[:,i,i] = 1.0
+        else:
+            _S = S
+        
+        np.savez(self.dir + '/' +self.sl+'.fakeTSHS.npz',
+                 H =  H,
+                 S = _S,
+                 k = kv)
+        
+        # nk, nE, no, no
+        G0  = _S[:,None,:,:] * E[None,:,None,None] - H[:,None,:,:]
+        SEf = np.zeros((n_lead, nk, nE, no, no), dtype=complex)
+        
+        for i in range(len(SEs)):
+            idx = np.array(kw_dict['inds_'+str(i)])
+            #print(SEf[i][..., idx[:, None],idx[None,:]].shape)
+            SEf[i][..., idx[:, None],idx[None,:]] += SEs[i]
+        
+        G0  -= SEf.sum(axis=0)
+        G0   = np.linalg.inv(G0)
+        Tij0 = np.zeros((nk,nE, n_lead, n_lead),dtype=complex)
+        
+        for i in range(len(SEs)):
+            Gam0i = 1j * (SEf[i] - SEf[i].conj().transpose(0,1,3,2) )
+            for j in range(i+1,len(SEs)):
+                Gam0j       = 1j * (SEf[j] - SEf[j].conj().transpose(0,1,3,2) )
+                Tij0[:,:,i,j] = np.trace(Gam0i@G0@Gam0j@(G0.conj().transpose(0,1,3,2)), axis1=2,axis2=3)
+        
+        transmission =  Tij0[:,:,0,1].sum(axis=0)
+        
+        from funcs import get_btd_partition_of_matrix
+        from scipy.sparse import csr_matrix
+        sortmat = csr_matrix((no,no))
+        iH,jH   = np.where((np.abs(H)>1e-10).any(axis=0))
+        sortmat[iH, jH] = 1.0
+        for se in SEf:
+            ise,jse = np.where((np.abs(se)>1e-10).any(axis=(0,1)))
+            sortmat[ise,jse] = 1.0
+        
+        piv,btd,part = get_btd_partition_of_matrix(sortmat, no//10)
+        np.savez(self.dir + '/' +self.sl+'.fakeTBT.npz',
+                 transmission = transmission,
+                 real_pivot   = np.nan,
+                 real_btd     = np.nan,
+                 pivot        = piv,
+                 btd          = btd,
+                 E            = E.real,
+                 _tbtTk_full  = Tij0,
+                 kv           = kv,
+                 wkpt         = np.ones(len(kv))/len(kv),
+                 E_F          = E_F,
+                 sortmat      = sortmat.todense()
+                 )
+        
+    def find_polygons(self, exclude_edge=True,tile=[1,5,1], bulk_connections = 3, NN_dist = 1.7, dist_from_edge=3.0, start_direc = np.array([0,1])):
+        print('Only works for 2D materials!')
+        from time import sleep
+        import matplotlib.pyplot as plt
+        
+        na = len(self.pos_real_space)
+        nuc = np.prod(tile)
+        RSC = np.zeros((na * nuc, 2))
+        R   = self.pos_real_space[:,[0,1]]
+        UC_vec = np.zeros((nuc, 2))
+        it  = 0
+        for ix in range(-(tile[0]//2),tile[0]//2+1):
+            for iy in range(-(tile[1]//2),tile[1]//2+1):
+                for iz in range(-(tile[2]//2),tile[2]//2+1):
+                    T          = self.lat[0,[0,1]]*ix + self.lat[1,[0,1]]*iy + self.lat[2,[0,1]]*iz
+                    RSC[it*na:(it+1)*na] = R + T
+                    UC_vec[it] = T 
+                    it+=1
+        del it
+        
+        Dij = np.linalg.norm(R[:,None,:] - RSC[None,:,:], axis=2)
+        #Indices with atoms that has the bulk number of nearest neighbors
+        IDX_b  = np.where(((Dij<NN_dist) * (Dij>0.1)).sum(axis=1)>=bulk_connections)[0]
+        IDX_e  = np.where(((Dij<NN_dist) * (Dij>0.1)).sum(axis=1)< bulk_connections)[0]
+        RI, RE = R[IDX_b], R[IDX_e]
+        Dij    = np.linalg.norm(RI[:,None,:] - RE[None,:,:],axis=2)
+        IDXII  = np.where((Dij>dist_from_edge).all(axis=1))
+        RI     = RI[IDXII]
+        deg    = 90 * np.pi/180
+        rot90  = np.array([[np.cos(deg), np.sin(deg)],
+                           [-np.sin(deg), np.cos(deg)]])
+        polys  = []
+        #plt.scatter(RSC[:,0],RSC[:,1])
+        #plt.scatter(RI[:,0],RI[:,1] )
+        #plt.scatter(R[:,0], R[:,1]+0.4, marker='*',color='k')
+        
+        for i in range(len(RI)):
+            ri    = RI[i].copy()
+            dij   = np.linalg.norm(ri - RSC, axis=1)
+            idxNN = np.where((dij < NN_dist) * (dij>0.1))[0]
+            
+            dR    = RSC[idxNN] - ri
+            
+            dots  = dR @ start_direc
+            idx   = np.where(dots == dots.max())[0][0]
+            bondR = dR[idx] #- ri
+            r     = ri + bondR
+            poly_points = [ r.copy()]
+            its = 0
+            poly_dist = np.array([[1]])
+            while (poly_dist>0.1).all():
+                dij    =  np.linalg.norm(r - RSC, axis=1)
+                idxNN  =  np.where((dij < NN_dist) * (dij>0.1))[0]
+                dR     =  RSC[idxNN] - r
+                
+                nR     =  np.linalg.norm(dR,axis=1)
+                angles =  np.arccos((dR@bondR)/( nR *np.linalg.norm(bondR)))
+                angles[np.isnan(angles)] = np.pi
+                sort   =  np.argsort(angles)
+                Right  =  rot90 @ bondR
+                for _i in sort:
+                    if np.dot(Right, dR[_i])>0:
+                        idx=_i
+                        break
+                
+                bondR         = dR[idx]
+                r            += bondR
+                poly_points  += [r.copy()]
+                arr           = np.array(poly_points)
+                poly_dist     = np.linalg.norm(arr[:, None,:] - arr[None,:,:],axis=2)
+                idx           = np.arange(len(poly_dist))
+                poly_dist[idx,idx]+=100.0
+                
+                # if np.mod(its,1) == 0:
+                #     plt.scatter(RSC[:,0], RSC[:,1])
+                #     arr = np.array(poly_points)
+                #     plt.scatter(arr[:,0],arr[:,1])
+                #     plt.axis('equal')
+                #     plt.xlim([arr[:,0].min() - 3, arr[:,0].max()+3])
+                #     plt.ylim([arr[:,1].min() - 3, arr[:,1].max()+3])
+                #     plt.show()
+                its+=1
+            polys += [np.array(poly_points)[0:-1].copy()]
+        
+        return polys
+    
+            
+               
+            
+        
+            
+            
+            
+            
+        
+        
+        
+        
+        
+        
+        
+        
+        
+    
 
+        
+    
+    
+    
+    # def use_custom_tbtgf(self):
+    #     self.elec_RSSE = not self.elec_RSSE
+    #     print('set elec_RSSE variable to ', self.elec_RSSE)
+        
 
     
     
