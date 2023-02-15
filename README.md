@@ -15,7 +15,7 @@ Favorably you can have them in your .bashrc file so that you can just call them 
 Download the code and extract to a folder of your choice. Then do a pip install -e . in the folder where the setup.py is located. 
 
 ## How to set up a siesta-calculation
-Copy the "siesta_python.py" and "funcs.py" scripts to the folder of your choice, together with a folder with the pseudo-potentials you will use. The pseudo-potentials must be named like this: 'atom'.'type'.psf, eg. for the molybdenum gga pseudo-potential would read Mo.gga.psf or the carbon lda: C.lda.psf. We will later reference this folder in the initialisation of the class contained in 'siesta_python.py'. http://nninc.cnf.cornell.edu/ is a place you can find pseudo-potentials for SIESTA
+make sure you have pip-installed this package. You also need a folder with pseudopotentials you will use. The default place siesta_python thinks it is, is the relative path '../pp' to your python script. The pseudo-potentials must be named like this: 'atom'.'type'.psf, eg. for the molybdenum gga pseudo-potential would read Mo.gga.psf or the carbon lda: C.lda.psf. We will later reference this folder in the initialisation of the class contained in 'siesta_python.py'. http://nninc.cnf.cornell.edu/ is a place you can find pseudo-potentials for SIESTA
 
 Before starting, we should have a folder called "pp" with the pseudo-potentials in the same folder you are running the calculation in. You should also be able to run siesta from the terminal using just "siesta RUN.fdf > RUN.out", else you will need to additionally specify the "siesta_exec" keyword in the initialisation below.
 
