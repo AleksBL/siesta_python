@@ -69,6 +69,10 @@ class fakeHS:
         dk = np.linalg.norm(self.k - k,axis=1)
         idx = np.where(dk == dk.min())[0][0]
         return sp.csr_matrix(self.M[idx])
+    @property
+    def shape(self):
+        return self.M.shape
+    
 
 class dummyspin:
     def __init__(self):

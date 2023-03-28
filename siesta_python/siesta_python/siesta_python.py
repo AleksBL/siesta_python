@@ -6,10 +6,17 @@ sys.path.append(__file__[:-16])
 from funcs import unique_list, Num2Sym,read_analyze,write_fdf,write_gin, read_geom_from_fdf
 from funcs import read_gulp_results,read_total_energy, read_fermi_level, write_relax_fdf, read_siesta_relax, Mulliken, Identity
 from funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
-from funcs import write_mpr
+from funcs import write_mpr, write_dftb_hsd
 from subprocess import Popen
 from datetime import datetime
 from config import GfModule_extension
+from dftbplus_interface import loadtxt as loadtxt_dftb
+from dftbplus_interface import has_equiv_in_l as equiv_dftb
+from dftbplus_interface import construct_sparse, read_mulliken_from_detailedout, constructHk
+from funcs import get_btd_partition_of_matrix as _BTDP
+from scipy.sparse import csr_matrix
+
+
 
 if GfModule_extension:
     from Gf_Module.Gf import read_SE_from_tbtrans
@@ -28,9 +35,6 @@ gulp_path     = 'gulp '
 gen_basis     = 'gen-basis '
 mix_ps        = 'mixps '
 joblib_backend= 'multiprocessing'
-
-
-
 
 if os.uname().nodename == 'aleksander-HP-EliteBook-840-G6':
     M = ''
@@ -140,7 +144,7 @@ class SiP:
         Reuse=False
         for i in ld(wd):
             if directory_name==i:
-                print('Directory called '+i+' already exists! Remove it? (y/reuse/n)')
+                #print('Directory called '+i+' already exists! Remove it? (y/reuse/n)')
                 if overwrite==True:
                     inp='y'
                 elif overwrite == 'reuse':
@@ -341,6 +345,7 @@ class SiP:
             self.standard_cell = None
         if self.Standardize_cell==True:
             self.standardise_cell()
+        self.UC_idx = self.cell_offset()
     
     def standardise_cell(self):
         if self.standard_cell==None:
@@ -373,6 +378,29 @@ class SiP:
     
     def barebone_fdf(self, eta = 0.0):
         barebones_RUN(self, eta = eta)
+    def make_bandpath(self):
+        v = [self.sym_dic[i] for i in self.sym_dic.keys()]
+        Names  = [i for i in self.sym_dic.keys()]
+        bz_path_names=[]
+        bz_path = []
+        #bz_path_num=[1]
+        
+        for i,kp in enumerate(v):
+            name = Names[i]
+            if self.TwoDim:
+                if abs(kp[2])<1e-10:
+                    bz_path_names+=[name]
+                    bz_path+=[kp]
+                    #print(kp)
+                    
+            if self.TwoDim == False:
+                bz_path_names+=[name]
+                bz_path+=[kp]
+        bz_path += [bz_path[0]]
+        bz_path_names += [bz_path_names[0]]
+        return bz_path, bz_path_names
+    
+    
     
     def fdf(self, eta = 0.0, manual_pp = [], fix_hartree = False):
         write_fdf(self, eta = eta)
@@ -389,6 +417,7 @@ class SiP:
         
         if self.dic != None:
             keys = self.dic.keys()
+            keys = [k for k in keys if 'dftb' not in k]
             for k in keys:
                 v = self.dic[k]
                 if len(k.split())==1:
@@ -412,7 +441,7 @@ class SiP:
         self.relaxed_pos = p
         self.relaxed_lat = l
     
-    def gin(self,cell_opti=[],f=None, var_cell = None, relax_only = False):
+    def gin(self,cell_opti=[],f=None, var_cell = None, relax_only = False, phonons=False):
         fix=[]
         if f is None and var_cell is None:
             pass
@@ -430,7 +459,163 @@ class SiP:
                 else:
                     fix+=[[0,0,0]]
         
-        write_gin(self,cell_opti=cell_opti,fix=fix, relax_only = relax_only )
+        write_gin(self,cell_opti=cell_opti,fix=fix, relax_only = relax_only, phonons=phonons)
+    
+    def dftb_hsd(self, Scc = 'Yes', write_cell = True, angmom_dic = {},
+                       ReadInititialCharges = 'No', WriteChargesAsText = 'Yes', ReadChargesAsText = 'No',
+                       WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
+                       ThirdOrderFull='No', HubDeriv=None,DampCor=None):
+        
+        write_dftb_hsd(self, Scc = Scc, write_cell = write_cell, angmom_dic = angmom_dic,
+                             ReadInitialCharges = ReadInititialCharges, WriteChargesAsText=WriteChargesAsText,
+                             ReadChargesAsText=ReadChargesAsText, WriteRealHS    = WriteRealHS, 
+                             CalculateForces=CalculateForces,     SkipChargeTest = SkipChargeTest,
+                             ThirdOrderFull = ThirdOrderFull, HubDeriv=HubDeriv,DampCor=DampCor)
+        
+        
+        if self.dic is None:
+            self.dic = {'dftb_angmom': angmom_dic}
+        else:
+            self.dic.update({'dftb_angmom': angmom_dic})
+    
+    def run_dftb_in_dir(self,silent = False, subprocess=False,wait=False):
+        if silent==False:
+            command = 'dftb+ '
+        else:
+            command = 'dftb+ > /dev/null'
+        
+        if subprocess:
+            with open(os.devnull, 'wb') as devnull:
+                if wait:
+                    Popen('cd '+self.dir + ' && ' + 
+                          command + ' && cd ..', shell = True,stdout = devnull,stderr =devnull).wait()
+                else:
+                    Popen('cd '+self.dir + ' && ' + 
+                          command, shell = True   )
+            return
+        
+        ###SCC RUN
+        os.chdir(self.dir)
+        os.system(command)
+        os.chdir('..')
+        
+    
+    def write_and_run_dftb_in_dir(self, angmom, skip_HS_write = False,
+                                  skip_write_charges=False, ThirdOrderFull='No',
+                                  HubDeriv = None, DampCor=None):
+        ###SCC RUN
+        self.dftb_hsd(angmom_dic = angmom, 
+                      ThirdOrderFull=ThirdOrderFull, 
+                      HubDeriv=HubDeriv,
+                      DampCor=DampCor
+                      )
+        self.run_dftb_in_dir(angmom)
+        #if skip_write_charges:
+        #    return
+        detailed_out = read_mulliken_from_detailedout(self.dir+'/detailed.out')
+        self.dftb_mullikencharge_interface()
+        Q0 = detailed_out['pop']
+        self.dic['dftb_charge'].set_Q(Q0)
+        self.dic['dftb_charge'].read_Q(label = 'init_Q')
+        
+        if skip_HS_write:
+            return
+        os.chdir(self.dir)
+        os.system('mv band.out Band.out')
+        os.system('mv detailed.out Detailed.out')
+        os.chdir('..')
+        ### Write HS run
+        self.dftb_hsd(angmom_dic           = angmom,
+                      WriteRealHS          = 'Yes', 
+                      ReadChargesAsText    = 'Yes',
+                      ReadInititialCharges = 'Yes',
+                      SkipChargeTest       = 'Yes',
+                      ThirdOrderFull=ThirdOrderFull, 
+                      HubDeriv=HubDeriv,
+                      DampCor=DampCor
+                      )
+        
+        self.run_dftb_in_dir(angmom)
+    
+    
+    def read_dftb_hamiltonian(self):
+        H_ele, RH, iH = loadtxt_dftb(self.dir+'/hamreal1.dat')
+        S_ele, RS, iS = loadtxt_dftb(self.dir+'/overreal.dat')
+        Roff          = self.cell_deviation()
+        DR            = Roff[RH[:,0]-1] - Roff[RH[:,1]-1]
+        RH[:,2:]     += DR
+        RS[:,2:]     += DR
+        
+        for h in H_ele:
+            h*=27.211396641308 # Rydberg to eV
+        if self.dic is None or 'dftb_equivH' not in self.dic.keys():
+            self.dftb_find_equiv(RH,'H')
+        if self.dic is None or 'dftb_equivS' not in self.dic.keys():
+            self.dftb_find_equiv(RS,'S')
+        return H_ele, RH, iH, S_ele, RS, iS
+    
+    def dftb2sisl(self, tol = 1e-5, gamma_only = False):
+        # Read
+        H_ele, RH, iH, S_ele, RS, iS = self.read_dftb_hamiltonian()
+        # Make dummy orbitals
+        if len(iH.shape)==1:
+            iH = iH[None,:]
+            iS = iS[None,:]
+        sislAtoms = [sisl.Atom(self.s[i], orbitals = [sisl.Orbital(R = 5.0) 
+                                                      for j in range(iH[i,2])]) 
+                     for i in range(len(iH))]
+        # SISL
+        geom = sisl.Geometry(self.pos_real_space, atoms = sislAtoms, sc = self.lat, )
+        
+        H    = sisl.Hamiltonian(geom, orthogonal = False)
+        maxx, maxy, maxz = np.abs(RH[:,2]).max(), np.abs(RH[:,3]).max(), np.abs(RH[:,4]).max()
+        if gamma_only:
+            H.set_nsc((1,1,1))
+        else:
+            H.set_nsc((maxx*2+1,maxy*2+1, maxz*2+1))
+        # Construct sparse matrices
+        Roff = None#+(self.center_cell() - self.UC_idx) 
+        Hsp  = construct_sparse(H_ele, RH, iH, self.dic['dftb_equivH'], H.sc, 
+                                tol  = tol,  gamma_only = gamma_only, 
+                                Roff = Roff
+                                )
+        
+        Ssp  = construct_sparse(S_ele, RS, iS, self.dic['dftb_equivS'], H.sc, 
+                                tol  = tol, gamma_only = gamma_only, 
+                                Roff = Roff
+                                )
+        
+        H    = H.fromsp(H.geometry, Hsp, Ssp)
+        return H
+    
+    def fast_dftb_hk(self, k = np.array((.0, .0, .0)), label = 'hamreal1', gamma_only = False):
+        H_ele, RH, iH  = loadtxt_dftb(self.dir+'/'+label+'.dat')
+        if 'hamreal' in label:
+            eq = self.dic['dftb_equivH']
+        else:
+            eq = self.dic['dftb_equivS']
+        hk = constructHk(k, H_ele, RH, iH, eq)
+        if 'hamreal' in label:
+            hk*=27.21139664130
+        return hk
+    
+    def dftb_find_equiv(self, R,label):
+        equiv = equiv_dftb(R)
+        if self.dic is None:
+            self.dic = {'dftb_equiv'+label: equiv}
+        else:
+            self.dic.update({'dftb_equiv'+label: equiv})
+        return equiv
+    
+    def dftb_mullikencharge_interface(self):
+        angmom2norb = {'s': 1, 'p': 4, 'd': 9, 'f': 16}
+        angmom = self.dic['dftb_angmom']
+        norb   = np.array([angmom2norb[angmom[Num2Sym[si]]] for si in self.s])
+        Charge = dftb_charge(self.dir+'/charges.dat', self.s, norb)
+        if self.dic is None:
+            self.dic = {'dftb_charge': Charge}
+        else:
+            self.dic.update({'dftb_charge': Charge})
     
     def get_pseudo_paths(self, manual = []):
         paths=[]
@@ -438,8 +623,8 @@ class SiP:
         atoms = unique_list(self.s) + manual
         atoms = [a for a in atoms if a <= 200]
         
-        Dir=self.pp_path
-        PPs=ld(Dir)
+        Dir   = self.pp_path
+        PPs   = ld(Dir)
         for atom in atoms:
             for pp in PPs:
                 name=''
@@ -1194,7 +1379,7 @@ class SiP:
             if ( ( ( self.s >= 0 ) * (d<min_dist) ).sum() )>1:
                 print('atoms too close...')
                 error()
-        print('No atoms overlapping within ' +str(min_dist) +' Å!')
+        #print('No atoms overlapping within ' +str(min_dist) +' Å!')
     
     def delete_fdf(self,name):
         os.chdir(self.dir)
@@ -1293,6 +1478,18 @@ class SiP:
         self._manual_weights = Weights
         self._manual_kgrid_tri = tri
         self.manual_k_points(kgrid, Weights)
+    
+    
+    def ideal_cell_charge(self,chargedic,spindeg=True):
+        q = 0.0
+        for s in self.s:
+            q += chargedic[Num2Sym[s]]
+        if spindeg:
+            q *= 0.5
+        return q
+    
+    
+    
     
     def get_contour_from_failed_RSSE(self):
         return read_contour_from_failed_RSSE_calc(self.dir + '/RUN.out')
@@ -1707,27 +1904,69 @@ class SiP:
         if move_elecs:
             for e in self.elecs:
                 e.move(T)
+    def pretty_cell(self):
+        lat = self.lat.copy()
+        ux  = np.array([1,0,0])
+        uy  = np.array([0,1,0])
+        if ux.dot(lat[0])<0:
+            lat[0]*=-1
+        if uy.dot(lat[1])<0:
+            lat[1]*=-1
+        self.set_struct(lat,self.pos_real_space, self.s)
+    
+    def cell_offset(self):
+        return np.floor(self.pos).astype(int)
+    def cell_deviation(self):
+        return self.UC_idx - self.center_cell() 
+    def center_cell(self):
+        v = np.average(self.UC_idx, axis=0)
+        return np.round(v, 0).astype(int)
+        
+        
+    
+    def make_pretty(self):
+        geom  =self.to_sisl()
+        self.pretty_cell()
+        self.move(geom.center(what='cell') - geom.center())
+        self.Wrap_unit_cell()
+    
+    # def wrap_elecs(self):
+    #     pos_new = self.pos_real_space.copy()
+    #     for ie in range(len(self.elecs)):
+    #         elec = self.elecs[ie]
+    #         elec.Wrap_unit_cell()
+    #         dr = elec.pos_real_space - self.pos_real_space[self.elec_inds[ie]]
+    #         pos_new[self.elec_inds[ie]] += dr
+    #     self.set_struct(self.lat, pos_new, self.s)
         
     
     def Wrap_unit_cell(self,shrink=1e-5,PRINT=False,strict_z=False, cell = None, max_y_tiles = 5,
-                       use_ase = False, wrap_elecs = False, wrap_buffer = False, ase_pbc = True):
+                       use_ase = True, wrap_elecs = True, wrap_buffer = True, ase_pbc = True, move_elec = True):
         if use_ase:
             sisl_obj = self.to_sisl()
             idx = [i for i in range(len(self.s)) 
                      if i not in list(np.array(self.elec_inds).ravel()) 
                      and i not in self.buffer_atoms ]
-            print(len(idx))
-            if wrap_elecs:
+            print(idx)
+            if wrap_elecs and self.elec_inds is not None:
                 idx += list(np.array(self.elec_inds).ravel())
             if wrap_buffer:
                 idx += self.buffer_atoms
             
             sisl_obj = sisl_obj.sub(idx)
-            ase_obj = sisl_obj.toASE()
+            ase_obj  = sisl_obj.to.ase()
             ase_obj.wrap(pbc = ase_pbc)
-            new_pos = self.pos_real_space.copy()
+            new_pos  = self.pos_real_space.copy()
             new_pos[idx] = ase_obj.positions
             self.set_struct(self.lat, new_pos, self.s)
+            if move_elec:
+                for ie in range(len(self.elecs)):
+                    elec = self.elecs[ie]
+                    new_elec_pos = self.pos_real_space[self.elec_inds[ie]]
+                    dr           = new_elec_pos - elec.pos_real_space
+                    pos          = elec.pos_real_space + dr
+                    elec.set_struct(elec.lat, pos, elec.s)
+            
             return
         
         from OldEMCode.Build_eps_from_planes import Structure
@@ -1783,7 +2022,10 @@ class SiP:
                         Break=True
         self.set_struct(self.lat, new_xyz, self.s)
     
-    def Visualise(self,T=[[0,0]],axes=[0,1], Mull_step = -1, Mull_map = Identity, Mull_which = 0, adjust_size = 1, annotate = False):
+    def Visualise(self,T=[[0,0]],axes=[0,1], Mull_step = -1, 
+                  Mull_map = Identity, Mull_which = 0, 
+                  adjust_size = 1, annotate = False,
+                  size = 1.0):
         import matplotlib.pyplot as plt
         color=np.zeros((len(self.pos_real_space),3))
         
@@ -1838,7 +2080,7 @@ class SiP:
                     shade = 1.0
                 Tv = self.lat[0,:]*t[0]+self.lat[1,:]*t[1]
                 r_plot=self.pos_real_space+Tv
-                plt.scatter(r_plot[:,axes[0]],r_plot[:,axes[1]],c=shade * color)
+                plt.scatter(r_plot[:,axes[0]],r_plot[:,axes[1]],c=shade * color, s = size)
                 if annotate == True:
                     for i,pi in enumerate(self.pos_real_space):
                         plt.annotate(str(self.s[i]), (pi[axes[0]],pi[axes[1]]) )
@@ -2380,7 +2622,7 @@ class SiP:
             ones[np.array(inds)[:,None],np.array(inds)[None,:]] = 1
             nonzeros+=ones
         nonzeros = abs(nonzeros)
-        piv,btd,part = get_btd_partition_of_matrix(nonzeros, start)
+        piv,btd,part = _BTDP(nonzeros, start)
         kw_dict   = {}
         for i in range(len(SEs)):
             kw_dict.update({'SE_'+str(i):eSEs[i]})
@@ -2454,24 +2696,26 @@ class SiP:
                  )
         
     
-    def calculate_2E_RSSE(self, Ev, tdir=0, kdir=1, n_jobs = 4, tol = (1e-6, 1e-4)):
-        from SelfEnergyCalculators import Decimation
+    def calculate_2E_RSSE(self, Ev, tdir=0, kdir=1, n_jobs = 4, 
+                          tol = (1e-6, 1e-4), ty= 1,
+                          workers =1,saveGR = False,
+                          SE_tol =1e-5):
+        from SelfEnergyCalculators        import Decimation
         from siesta_optics.LinearResponse import sisl2array
         from siesta_optics.LinearResponse import sisl2coup
         
         if len(self.elecs)!=2:
             print('This function can only use two electrodes!')
             return
+        kwdict = {}
         
         Hm, Sm = self.elecs[0].to_sisl('TSHS')
         Hp, Sp = self.elecs[1].to_sisl('TSHS')
         Hd, Sd = self.to_sisl('TSHS')
-        
-        self.Deci = Decimation
-        
-        ny  = Hd.nsc[kdir]//2
-        #print(ny)
+        self.Deci      = Decimation
+        ny             = Hd.nsc[kdir]//2
         idx_e1, idx_e2 = self.elec_inds
+        idx_b          = self.buffer_atoms
         
         _oidx_e1  = [ list(Hd.a2o(i)) if isinstance(Hd.a2o(i), np.ndarray) else [Hd.a2o(i)] for i in idx_e1 ]
         oidx_e1   = []
@@ -2483,19 +2727,28 @@ class SiP:
         for u in _oidx_e2:
             oidx_e2 += u
         
-        oidx_d   = list(set([i for i in range(Hd.no)]) - set(oidx_e1) - set(oidx_e2))
-        _eidx    = (list(idx_e1)  + list(idx_e2))
-        _oeidx   = (list(oidx_e1) + list(oidx_e2))
-        _didx = [i for i in range(Hd.na) if i not in _eidx ]
-        _odidx= [i for i in range(Hd.no) if i not in _oeidx]
+        _oidx_b  = [ list(Hd.a2o(i)) if isinstance(Hd.a2o(i), np.ndarray) else [Hd.a2o(i)] for i in idx_b ]
+        oidx_b   = []
+        for u in _oidx_b:
+            oidx_b += u
+        
+        oidx_d   = list(set([i for i in range(Hd.no)]) - set(oidx_e1) - set(oidx_e2) - set(oidx_b))
+        _eidx    = (list(idx_e1)  + list(idx_e2) )
+        #_oeidx   = (list(oidx_e1) + list(oidx_e2))
+        _didx    = [i for i in range(Hd.na) if i not in (_eidx+idx_b)]
+        #_odidx= [i for i in range(Hd.no) if i not in _oeidx]
+        
+        kwdict.update({'buffer_orbs'  : oidx_b})
+        kwdict.update({'buffer_atoms' : idx_b })
+        
         Hdsub    = Hd.sub(_didx)
         Sdsub    = Sd.sub(_didx)
         #print(Hdsub.shape)
         if len(self.buffer_atoms)!=0:
             print('Buffer atoms present')
-            oidx_d = [i for i in oidx_d if i not in self.buffer_atoms]
-            Hdsub    = Hdsub.remove(self.buffer_atoms)
-            Sdsub    = Sdsub.remove(self.buffer_atoms)
+            #oidx_d = [i for i in oidx_d if i not in self.buffer_atoms]
+            #Hdsub    = Hdsub.remove(self.buffer_atoms)
+            #Sdsub    = Sdsub.remove(self.buffer_atoms)
         
         noL, noD, noR  = Hm.no, Hdsub.no, Hp.no
         
@@ -2524,12 +2777,15 @@ class SiP:
             ArD[0,ic], ArD[1,ic] = sisl2coup(Hdsub, Sdsub, i*y)
             
             _h,_s = sisl2coup(Hd, Sd, i*y)
-            Vdl[ic], Sdl[ic] = _h[_odidx,:][:,oidx_e1], _s[_odidx,:][:,oidx_e1]
-            Vdr[ic], Sdr[ic] = _h[_odidx,:][:,oidx_e2], _s[_odidx,:][:,oidx_e2]
+            #print(len(oidx_d))
+            #print(len(oidx_e1))
+            #print(Vdl.shape)
+            Vdl[ic], Sdl[ic] = _h[oidx_d,:][:,oidx_e1], _s[oidx_d,:][:,oidx_e1]
+            Vdr[ic], Sdr[ic] = _h[oidx_d,:][:,oidx_e2], _s[oidx_d,:][:,oidx_e2]
         
         # assert np.allclose(Vdl[0], Vdl[2].T)
         # assert np.allclose(Vdr[0], Vdr[2].T)
-        self.RSSEdata = {'Ev':Ev,
+        self.RSSEdata = {'Ev' : Ev,
                          'ArL': ArL,
                          'ArR': ArR,
                          'ArD': ArD,
@@ -2539,40 +2795,64 @@ class SiP:
                          'Sdl': Sdl
                          }
         
-        
         assert np.allclose(ArD[:,0], ArD[:,2].transpose(0,2,1))
         assert np.allclose(ArR[[0,2],0], ArR[[0,2],2].transpose(0,2,1))
         assert np.allclose(ArL[[0,2],0], ArL[[0,2],2].transpose(0,2,1))
-        
+        # 
         # return ArL, ArR, ArD, Vdl, Vdr, Sdl, Sdr
         RES = self.Deci.par_integrate_GkLDR(Ev, ArL, ArD, ArR, Vdl, Vdr, Sdl, Sdr,
-                                            n_jobs=n_jobs, tol=tol)
-        HR  = ArD[0,ny]
-        SR  = ArD[1,ny]
+                                            n_jobs=n_jobs, tol=tol, 
+                                            ty=ty, workers = workers)
+        if ty == 1:
+            HR  = ArD[0,ny]
+            SR  = ArD[1,ny]
+        else:
+            Hdsub2     = Hdsub.copy()
+            vals       = np.ones(3)
+            vals[kdir] = Hdsub.nsc[kdir]
+            Hdsub2.set_nsc(vals)
+            Hdsub2     = Hdsub2.tile(ty,kdir)
+            Hdsub2.set_nsc((1,1,1))
+            HR         = Hdsub2.Hk().toarray()
+            SR         = Hdsub2.Sk().toarray()
+            kwdict.update({'Htilexyz':Hdsub2.xyz.copy(),'tile':ty})
+            Hdsub2.write(self.dir + '/RSSE_tiled_Hd.TSHS')
+                
+        G            = np.array([res[0] for res in RES])
+        SER          = Ev[:, None, None]*SR-HR-np.linalg.inv(G)
+        coupling_idx = np.unique(np.where((np.abs(SER)>SE_tol).sum(axis=0))[0])
+        if ty==1:
+            o2a = [Hdsub.o2a(i) for i in coupling_idx]
+        else:
+            o2a = [Hdsub2.o2a(i) for i in coupling_idx]
         
-        SER = Ev[:, None, None]*SR-HR-np.linalg.inv([res[0] for res in RES])
-        coupling_idx = np.unique(np.where((np.abs(SER)>1e-10).sum(axis=0))[0])
-        SER = SER[:,coupling_idx,:][:,:,coupling_idx]
+        kwdict.update({'o2a_cidx':o2a})
+        SER          = SER[:,coupling_idx,:][:,:,coupling_idx].astype(np.complex64)
+        if saveGR:
+            kwdict.update({'RealspaceG':G.astype(np.complex64)})
         
-        np.savez(self.dir+'/RSSE.npz',
-                 RealspaceSE = SER,
-                 Dvcxyz      = self.pos_real_space,
-                 coupling_idx= coupling_idx,
-                 RealspaceG  = [res[0] for res in RES],
-                 Ev          = Ev,
-                 HR          = HR,
-                 SR          = SR,
-                 e1_atoms    = idx_e1,
-                 e2_atoms    = idx_e2,
-                 e1_orbs     = oidx_e1,
-                 e2_orbs     = oidx_e2,
-                 )
+        np.savez_compressed(self.dir+'/RSSE.npz',
+                             RealspaceSE = SER,
+                             Dvcxyz      = self.pos_real_space,
+                             coupling_idx= coupling_idx,
+                             Ev          = Ev,
+                             HR          = HR,
+                             SR          = SR,
+                             e1_atoms    = idx_e1,
+                             e2_atoms    = idx_e2,
+                             e1_orbs     = oidx_e1,
+                             e2_orbs     = oidx_e2,
+                             **kwdict
+                             )
+        self.Deci = None
         
-    def from_custom(self,H, SEs, Ev, kv, S = None, SE_inds = None, E_F = 0.0, eta = 1e-3):
+    
+    def from_custom(self,H, SEs, Ev, kv, S = None, SE_inds = None, E_F = 0.0, eta = 1e-3, tol = 1e-10):
         """
             H: Hamiltonian (nk, no, no) array.
             SEs: list of (nk, nE, no, no) array with self-energies, 
-                 one for each electrode.
+                 one for each electrode. Can also be a list of objects with the
+                 self_energy method.
             E  : (nE, ) array with energy points where self-energies have
                  been sampled.
         """
@@ -2580,12 +2860,22 @@ class SiP:
         if (Ev.imag==0.0).all():
             E = Ev + 1j * eta
         else:
-            E = Ev
+            E = Ev 
         
         nk, no    = H.shape[0], H.shape[1]
         nE        = len(E)
         n_lead    = len(SEs)
         kw_dict   = {}
+        
+        for i in range(n_lead):
+            if not isinstance(SEs[i],np.ndarray):
+                sise   = SEs[i]
+                NewSE  = np.zeros((nk,nE,sise.no,sise.no),dtype=complex)
+                for ik in range(nk):
+                    for ie in range(nE):
+                        NewSE[ik,ie] = sise.self_energy(E[ie],k=kv[ik])
+                SEs[i] = NewSE
+        
         for i in range(len(SEs)):
             kw_dict.update({'SE_'+str(i):SEs[i]})
             if isinstance(SE_inds,list):
@@ -2593,11 +2883,12 @@ class SiP:
             else:
                 kw_dict.update({'inds_'+str(i):np.arange(no)})
         
-        np.savez(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
-                 **kw_dict,
-                 Contour = E,
-                 Mode2=1
-                 )
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
+                            **kw_dict,
+                            Contour = E,
+                            Mode2=1
+                            )
+        
         if S is None:
             _S = H.copy()
             _S[:,:,:] = 0.0
@@ -2606,57 +2897,56 @@ class SiP:
         else:
             _S = S
         
-        np.savez(self.dir + '/' +self.sl+'.fakeTSHS.npz',
-                 H =  H,
-                 S = _S,
-                 k = kv)
-        
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTSHS.npz',
+                            H =  H,
+                            S = _S,
+                            k = kv)
         # nk, nE, no, no
-        G0  = _S[:,None,:,:] * E[None,:,None,None] - H[:,None,:,:]
-        SEf = np.zeros((n_lead, nk, nE, no, no), dtype=complex)
-        
+        G  = np.zeros((nk,nE, no,no),dtype=complex)
+        G += _S[:,None,:,:] * E[None,:,None,None] - H[:,None,:,:]
         for i in range(len(SEs)):
             idx = np.array(kw_dict['inds_'+str(i)])
-            #print(SEf[i][..., idx[:, None],idx[None,:]].shape)
-            SEf[i][..., idx[:, None],idx[None,:]] += SEs[i]
-        
-        G0  -= SEf.sum(axis=0)
-        G0   = np.linalg.inv(G0)
+            G[...,idx[:, None],idx[None,:]] -= SEs[i]
+        G = np.linalg.inv(G)
         Tij0 = np.zeros((nk,nE, n_lead, n_lead),dtype=complex)
-        
         for i in range(len(SEs)):
-            Gam0i = 1j * (SEf[i] - SEf[i].conj().transpose(0,1,3,2) )
+            Gam0i  = 1j*(SEs[i] - SEs[i].conj().transpose(0,1,3,2))
+            idxi   = kw_dict['inds_'+str(i)]
             for j in range(i+1,len(SEs)):
-                Gam0j       = 1j * (SEf[j] - SEf[j].conj().transpose(0,1,3,2) )
-                Tij0[:,:,i,j] = np.trace(Gam0i@G0@Gam0j@(G0.conj().transpose(0,1,3,2)), axis1=2,axis2=3)
+                Gam0j = 1j*(SEs[j] - SEs[j].conj().transpose(0,1,3,2))
+                idxj  = kw_dict['inds_'+str(j)]
+                # Trace of Product.
+                M1       = Gam0i@(G[:,:, idxi,:][...,idxj])
+                M2       = Gam0j@(G.conj().transpose(0,1,3,2)[:,:,idxj,:][...,idxi])
+                Tij0[:,:,i,j] = (M1*(M2.transpose(0,1,3,2))).sum(axis=(2,3))
         
         transmission =  Tij0[:,:,0,1].sum(axis=0)
-        
-        from funcs import get_btd_partition_of_matrix
-        from scipy.sparse import csr_matrix
+        # Pivotting
         sortmat = csr_matrix((no,no))
-        iH,jH   = np.where((np.abs(H)>1e-10).any(axis=0))
+        iH,jH   = np.where((np.abs(H)>tol).any(axis=0))
         sortmat[iH, jH] = 1.0
-        for se in SEf:
-            ise,jse = np.where((np.abs(se)>1e-10).any(axis=(0,1)))
-            sortmat[ise,jse] = 1.0
-        
-        piv,btd,part = get_btd_partition_of_matrix(sortmat, no//10)
-        np.savez(self.dir + '/' +self.sl+'.fakeTBT.npz',
-                 transmission = transmission,
-                 real_pivot   = np.nan,
-                 real_btd     = np.nan,
-                 pivot        = piv,
-                 btd          = btd,
-                 E            = E.real,
-                 _tbtTk_full  = Tij0,
-                 kv           = kv,
-                 wkpt         = np.ones(len(kv))/len(kv),
-                 E_F          = E_F,
-                 sortmat      = sortmat.todense()
-                 )
-        
-    def find_polygons(self, exclude_edge=True,tile=[1,5,1], bulk_connections = 3, NN_dist = 1.7, dist_from_edge=3.0, start_direc = np.array([0,1])):
+        for i in range(len(SEs)):
+            idx = np.array(kw_dict['inds_'+str(i)])
+            sortmat[idx[:,None],idx[None,:]] = 1.0
+        piv,btd,part = _BTDP(sortmat, no//10)
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.npz',
+                            transmission = transmission,
+                            real_pivot   = np.nan,
+                            real_btd     = np.nan,
+                            pivot        = piv,
+                            btd          = btd,
+                            E            = E.real,
+                            _tbtTk_full  = Tij0,
+                            kv           = kv,
+                            wkpt         = np.ones(len(kv))/len(kv),
+                            E_F          = E_F,
+                            sortmat      = sortmat.todense()
+                            )
+    
+    def find_polygons(self, exclude_edge=True,tile=[1,5,1], 
+                      bulk_connections = 3, NN_dist = 1.7, 
+                      dist_from_edge=3.0, start_direc = np.array([0,1]),
+                      sign = 1):
         print('Only works for 2D materials!')
         from time import sleep
         import matplotlib.pyplot as plt
@@ -2680,6 +2970,7 @@ class SiP:
         #Indices with atoms that has the bulk number of nearest neighbors
         IDX_b  = np.where(((Dij<NN_dist) * (Dij>0.1)).sum(axis=1)>=bulk_connections)[0]
         IDX_e  = np.where(((Dij<NN_dist) * (Dij>0.1)).sum(axis=1)< bulk_connections)[0]
+        
         RI, RE = R[IDX_b], R[IDX_e]
         Dij    = np.linalg.norm(RI[:,None,:] - RE[None,:,:],axis=2)
         IDXII  = np.where((Dij>dist_from_edge).all(axis=1))
@@ -2715,11 +3006,9 @@ class SiP:
                 angles =  np.arccos((dR@bondR)/( nR *np.linalg.norm(bondR)))
                 angles[np.isnan(angles)] = np.pi
                 sort   =  np.argsort(angles)
-                Right  =  rot90 @ bondR
-                for _i in sort:
-                    if np.dot(Right, dR[_i])>0:
-                        idx=_i
-                        break
+                Right  =  sign*rot90 @ bondR
+                dots   =  dR@Right
+                idx    =  np.where(dots==dots.max())[0][0]
                 
                 bondR         = dR[idx]
                 r            += bondR
@@ -2728,17 +3017,8 @@ class SiP:
                 poly_dist     = np.linalg.norm(arr[:, None,:] - arr[None,:,:],axis=2)
                 idx           = np.arange(len(poly_dist))
                 poly_dist[idx,idx]+=100.0
-                
-                # if np.mod(its,1) == 0:
-                #     plt.scatter(RSC[:,0], RSC[:,1])
-                #     arr = np.array(poly_points)
-                #     plt.scatter(arr[:,0],arr[:,1])
-                #     plt.axis('equal')
-                #     plt.xlim([arr[:,0].min() - 3, arr[:,0].max()+3])
-                #     plt.ylim([arr[:,1].min() - 3, arr[:,1].max()+3])
-                #     plt.show()
                 its+=1
-            polys += [np.array(poly_points)[0:-1].copy()]
+            polys += [np.array(poly_points)[:-1].copy()]
         
         return polys
     
@@ -2802,9 +3082,71 @@ class sisl_replica_for_projection:
         self.geom = sip.to_sisl(what = 'geom')
         self.SiP  = sip
 
+class dftb_charge:
+    def __init__(self, file, atoms, norbs):
+        self.file = file
+        self.norbs = norbs
+        self.atoms = atoms
+        self.createa2o()
+        self.dic = {}
+    def a2o(self,ia,lo):
+        orbs = self.norbs[:ia].sum()
+        return orbs + lo
+    def createa2o(self):
+        array = np.ones((len(self.atoms), self.norbs.max()),dtype=int)*(-1)# * np.nan
+        no_tot= self.norbs.sum()
+        it = 0
+        for ia in range(len(self.atoms)):
+            for lo in range(self.norbs[ia]):
+                array[ia, lo] = it
+                it+=1
+        assert no_tot == it
+        self.iaio2i = array.astype(int)
+    def set_iaio2i(self,idx):
+        self.iaio2i = idx
+    def set_Q(self, Qv, idx = None):
+        Qtot  = Qv.sum()
+        f     = open(self.file,'r')
+        li    = f.readlines()
+        f.close()
+        line  = ''+li[1]
+        split = line.split()
+        split[-1] = '  '+str(Qtot)+'\n'
+        li[1] ='  '.join(split)
+        if idx is None:
+            idx = self.iaio2i
+        shift = 2
+        for io in range(len(Qv)):
+            ia,lo = np.where(idx == io)
+            ia    = ia[0]; lo = lo[0]
+            q     = Qv[io]
+            if q<0.0 or np.isnan(q):
+                continue
+            line  = '' + li[ia + shift]
+            split = line.split()
+            split[lo] = str(q)[0:15]
+            li[ia + shift] = ' '.join(split) + '\n'
+        f = open(self.file,'w')
+        for l in li:
+            f.write(l)
+        f.close()
+    def read_Q(self, idx=None, label = None):
+        if idx is None:
+            idx = self.iaio2i
+        li    = open(self.file,'r').readlines()
+        Qv    = np.zeros(idx.max()+1)
+        for ia, line in enumerate(li[2:-1]):
+            split = line.split()
+            Qs    = [float(split[i]) for i in range(len(split))]
+            Qv[idx[ia, 0:len(Qs)]] = Qs
+        if label is not None:
+            self.dic.update({label:Qv})
+        return Qv
+    
+            
+            
+        
+        
     
     
     
-    
-
-

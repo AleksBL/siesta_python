@@ -641,13 +641,16 @@ def write_relax_fdf(object, Constraints, force_tol = 0.01, max_it = 1000):
             f.write('    ' + line + ' \n')
         f.write('%endblock\n')
 
-def write_gin(object,cell_opti=[],fix=[],relax_only = False):
+def write_gin(object,cell_opti=[],fix=[],relax_only = False, phonons=False):
     with open(object.dir+'/Gulp.gin','w') as f:
         ##Fra Mads##
         if relax_only == True:
             f.write('opti dist full nosymmetry\n')
+        elif phonons==True:
+            f.write('nosymmetry phon eigenvectors dynamical_matrix\n')
         else:
             f.write('opti dist full nosymmetry phon eigenvectors dynamical_matrix\n')
+        
         f.write('cutd 5.0\n')
         f.write('vectors\n')
         for i in range(3):
@@ -1394,7 +1397,6 @@ def interpolate_and_fft(x,y,N):
     dx = xx[1] - xx[0]
     return np.fft.rfft(yy), np.fft.rfftfreq(2*N, dx)
 
-
 def pyinds2siesta(idx):
     return listinds_to_string(numpy_inds_to_string(idx+1))
 
@@ -1464,4 +1466,105 @@ def get_twist(geom,s1,s2):
     v2 *= 1/np.linalg.norm(v2)
     return np.arccos(v1.dot(v2))
 
+
+
+
+def write_dftb_hsd(object, Scc = 'Yes', write_cell = True, angmom_dic = {},
+                   ReadInitialCharges = 'No', WriteChargesAsText = 'No', ReadChargesAsText = 'No',
+                   WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
+                   ThirdOrderFull = 'No', HubDeriv=None,DampCor=None):
+    
+    ua = unique_list(object.s)
+    na = str(len(object.s))
+    una= str(len(ua))
+    bohr2A = 1.0#0.529177249
+    A2bohr = 1.0#1 / bohr2A
+    atomnr_to_label = {}
+    it = 0
+    for atomnr in ua:
+        atomnr_to_label.update({str(ua[it]):str(it+1)})
+        it+=1
+    
+    s = '  '
+    if 'dftb_in.hsd' in os.listdir(object.dir):
+        os.system('mv ' + object.dir+'/dftb_in.hsd '+object.dir+'/dftb_in.old')
+    
+    with open(object.dir+'/dftb_in.hsd','w') as f:
+        GeomBlock  = 'Geometry = GenFormat{ \n  '+na+' S\n'
+        for i in range(len(ua)):
+            GeomBlock += s + Num2Sym[ua[i]]+' ' 
+        GeomBlock += '\n'
+        for i in range(len(object.s)):
+            ri = np.round(object.pos_real_space[i] * A2bohr, 7)
+            GeomBlock += s+str(i+1)+' ' + atomnr_to_label[str(object.s[i])]
+            GeomBlock += ' '+str(ri[0]) + ' ' + str(ri[1]) + ' ' + str(ri[2])
+            GeomBlock += '\n'
+        if write_cell:
+            GeomBlock += s+'0.0          0.0            0.0 \n'
+            for i in range(3):
+                GeomBlock+='  '
+                for j in range(3):
+                    GeomBlock+='  '+str(np.round(object.lat[i,j]*A2bohr,5))
+                GeomBlock += '\n'
+        GeomBlock+='}\n\n'
+        
+        HamBlock  = 'Hamiltonian = DFTB{\n'
+        HamBlock += s+'Scc = ' +Scc +    '\n'
+        HamBlock += s+'MaxSccIterations = '+str(object.max_scf_it) + '\n'
+        HamBlock += s+'SccTolerance = '+str(object.dm_tol) + '\n'
+        HamBlock += s+'SlaterKosterFiles =  Type2FileNames {\n'
+        HamBlock += s+'Prefix = '+object.pp_path + '\n'
+        HamBlock += s+'Separator = \"-\"\n'
+        HamBlock += s+'suffix = .skf\n'
+        HamBlock += s+'}\n'
+        HamBlock += s+'MaxAngularMomentum {'
+        for ia in ua:
+            sym  = Num2Sym[ia]
+            HamBlock += s+'  '+sym+' = \"'+angmom_dic[sym]+'\"\n'
+        HamBlock +=s+'}\n\n'
+        if object.kp is not None:
+            HamBlock +=s+'KPointsAndWeights = SuperCellFolding {\n'
+            HamBlock += s + '   '+str(object.kp[0])+' 0 0 \n'
+            HamBlock += s + '   0 '+str(object.kp[1])+' 0 \n'
+            HamBlock += s + '   0 0 ' + str(object.kp[2]) + '\n'
+            HamBlock += s + '   0.5 0.5 0.5'
+            HamBlock += s + '}\n'
+        HamBlock += s + 'Filling = Fermi {\n'
+        HamBlock += s + 'Temperature[Kelvin] = '+str(np.round(object.electronic_temperature_mev /(1000*8.6173 * 10**-5))) + '}\n\n'
+        HamBlock += s + 'ReadInitialCharges = ' + ReadInitialCharges + '\n'
+        if ThirdOrderFull=='Yes':
+            HamBlock += s + 'ThirdOrderFull = Yes\n'
+        if DampCor is not None:
+            HamBlock += s + 'HCorrection = Damping {Exponent = '+str(DampCor)+' }\n'
+        if HubDeriv is not None:
+            HubBlock = s+'HubbardDerivs {\n'
+            for k in HubDeriv.keys():
+                HubBlock += 2*s + k + ' = ' + HubDeriv[k] + '\n'
+            HubBlock += s+'}\n'
+            HamBlock += HubBlock
+        HamBlock += '}'
+        
+        OptBlock  = '\n\nOptions{\n'
+        if WriteRealHS != 'No':
+            OptBlock += s + 'WriteRealHS        = ' + WriteRealHS        + '\n'
+        if WriteChargesAsText != 'No':
+            OptBlock += s + 'WriteChargesAsText = ' + WriteChargesAsText + '\n'
+        if ReadChargesAsText  != 'No':
+            OptBlock += s + 'ReadChargesAsText  = ' + ReadChargesAsText  + '\n'
+        if SkipChargeTest != 'No':
+            OptBlock += s + 'SkipChargeTest     = ' + SkipChargeTest     + '\n'
+        OptBlock += '}\n'
+        
+        f.write(GeomBlock + HamBlock + OptBlock)
+        
+        
+        
+        
+        
+        
+        
+    
+        
+        
+        
     

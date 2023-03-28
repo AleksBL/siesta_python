@@ -72,7 +72,6 @@ if hsfile is None:
 
 HS  = sisl.get_sile(DirName+'/'+hsfile).read_hamiltonian()
 structfile = sisl.get_sile(DirName+'/'+'STRUCT.fdf').read_geometry()
-
 Orbitals = DFTOrbitals(DirName, np.array(structfile.atoms.Z), N = 10, force_uneven = False)
 Orbitals.set_pos(structfile.xyz.copy())
 

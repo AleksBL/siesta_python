@@ -11,7 +11,7 @@ import numpy as np
 import becke
 from time import time
 from scipy.integrate import tplquad
-import quadpy
+#import quadpy
 from Zandpack.HartreeFromDensity import make_density,matrixelementsoffield#, make_density_jit
 
 
@@ -57,16 +57,16 @@ class DFTOrbitals:
             
             for io,o in enumerate(B[a].orbitals):
                 Aorbs  += [o.psi(Rs).reshape(x.shape)]
-                Alabels = [(B[a].Z,io)]
+                Alabels+= [(B[a].Z,io)]
                 Afuncs += [o.psi]
             orbs   += [Aorbs  ]
             labels += [Alabels]
             funcs  += [Afuncs ]
-        
-        self.s = s
+        self.s        = s
         self.orbitals = orbs
         self.labels   = labels
         self.funcs    = funcs
+        #print(labels)
         self.i2o()
         self.pos = None
         
@@ -86,7 +86,8 @@ class DFTOrbitals:
     def get_no(self):
         no = 0
         for i in range(len(self.s)):
-            no += len(self.get_orbitals(self.s[i])[0])
+            orb = self.get_orbitals(self.s[i])[0]
+            no += len(orb)
         return no
     
     def i2a(self,j):
@@ -312,62 +313,76 @@ class DFTOrbitals:
         if quadpy_N is None:
             return tplquad(F, xmin, xmax, ymin, ymax, zmin, zmax,epsabs = 1e-5, epsrel = 1e-3 )
         else:
-            if isinstance(quadpy_N,int):
-                Nx=Ny=Nz=quadpy_N
-            if isinstance(quadpy_N, list):
-                Nx,Ny,Nz = quadpy_N
-            #scheme = quadpy.t3.get_good_scheme(5)
+            pass
+            # if isinstance(quadpy_N,int):
+            #     Nx=Ny=Nz=quadpy_N
+            # if isinstance(quadpy_N, list):
+            #     Nx,Ny,Nz = quadpy_N
+            # #scheme = quadpy.t3.get_good_scheme(5)
             
-            scheme = quadpy.c3.product(quadpy.c1.newton_cotes_closed(3))
-            # scheme.show()
-            DX = (xmax - xmin)/Nx; Rx = DX/2
-            DY = (ymax - ymin)/Ny; Ry = DY/2
-            DZ = (zmax - zmin)/Nz; Rz = DZ/2
-            res = 0.0
-            for I in range(Nx):
-                xC = xmin + I * DX
-                for J in range(Ny):
-                    yC = ymin + J * DY
-                    for K in range(Nz):
-                        zC = zmin + K * DZ
-                        val = scheme.integrate(
-                            _FF,#lambda x: np.exp(x[0]),
-                            quadpy.c3.cube_points([xC - Rx, xC + Rx], [yC - Ry, yC + Ry], [zC - Rz, zC + Rz]),
-                            )
-                        #val = scheme.integrate(
-                        #    _FF,
-                            #[[xC-Rx, yC-Ry, zC-Rz], [xC+Rx, yC-Ry, zC-Rz], [xC-Rx, yC+Ry, zC-Rz], [xC-Rx, yC-Ry, zC+Rz]],
-                        #    [[xC - Rx, xC + Rx], [yC - Ry, yC + Ry], [zC - Rz, zC + Rz]]
-                        #    )
-                        res += val
-            return res
+            # scheme = quadpy.c3.product(quadpy.c1.newton_cotes_closed(3))
+            # # scheme.show()
+            # DX = (xmax - xmin)/Nx; Rx = DX/2
+            # DY = (ymax - ymin)/Ny; Ry = DY/2
+            # DZ = (zmax - zmin)/Nz; Rz = DZ/2
+            # res = 0.0
+            # for I in range(Nx):
+            #     xC = xmin + I * DX
+            #     for J in range(Ny):
+            #         yC = ymin + J * DY
+            #         for K in range(Nz):
+            #             zC = zmin + K * DZ
+            #             val = scheme.integrate(
+            #                 _FF,#lambda x: np.exp(x[0]),
+            #                 quadpy.c3.cube_points([xC - Rx, xC + Rx], [yC - Ry, yC + Ry], [zC - Rz, zC + Rz]),
+            #                 )
+            #             #val = scheme.integrate(
+            #             #    _FF,
+            #                 #[[xC-Rx, yC-Ry, zC-Rz], [xC+Rx, yC-Ry, zC-Rz], [xC-Rx, yC+Ry, zC-Rz], [xC-Rx, yC-Ry, zC+Rz]],
+            #             #    [[xC - Rx, xC + Rx], [yC - Ry, yC + Ry], [zC - Rz, zC + Rz]]
+            #             #    )
+            #             res += val
+            # return res
     
-    def InitDensity(self, StaticDens = None, vac =[3.0, 3.0, 3.0], dtype = np.float32, didx = None):
+    def InitDensity(self, StaticDens = None, vac =[.5, .5, .5], 
+                    dtype = np.float32, didx = None,):
         if didx is None:
             self.didx = np.arange(self.get_no())
         else:
             self.didx = didx
-        
-        tpos = np.array([self.get_pos(i) for i in self.didx])
-        
-        tpos[:,0]-=tpos[:,0].min()#+ vac[0]
-        tpos[:,1]-=tpos[:,1].min()#+ vac[1]
-        tpos[:,2]-=tpos[:,2].min()#+ vac[2]
-        tpos += np.array(vac)
-        
-        Lx = tpos[:,0].max() + vac[0]
-        Ly = tpos[:,1].max() + vac[1]
-        Lz = tpos[:,2].max() + vac[2]
-        #print(Lx, Ly,Lz)
-        Nx, Ny, Nz = int(Lx/self.dx), int(Ly/self.dx),int(Lz/self.dx)
-        
-        self.Dens = np.zeros((Nx, Ny, Nz), dtype  = dtype)
-        self.fpos = tpos / self.dx
+        step = self.dx/4
+        _vac = np.array(vac)
+        Nxyz = np.array([2,2,2])
+        def cond():
+            return np.mod(Nxyz,2)
+        it = 0
+        while (cond()==0).any():
+            _vac[cond() == 0]+= step
+            tpos = np.array([self.get_pos(i) for i in self.didx])
+            tpos_min = tpos.min(axis=0)
+            #print(tpos_min.shape)
+            
+            #_Lx,_Ly,_Lz = np.max(tpos,axis=0) - np.min(tpos,axis=0) + vac
+            tpos[:,0]-=tpos[:,0].min()
+            tpos[:,1]-=tpos[:,1].min()
+            tpos[:,2]-=tpos[:,2].min()
+            tpos += _vac
+            Lx = tpos[:,0].max() + _vac[0] 
+            Ly = tpos[:,1].max() + _vac[1] 
+            Lz = tpos[:,2].max() + _vac[2] 
+            Nx, Ny, Nz = int(Lx/self.dx), int(Ly/self.dx),int(Lz/self.dx)
+            Nxyz       = np.array([Nx,Ny,Nz])
+            #print(it)
+            it+=1
+        #print(_vac)
+            
+        self.Dens    = np.zeros((Nx, Ny, Nz), dtype  = dtype)
+        self.fpos    = tpos / self.dx
         self.StaticDens = StaticDens
         self.OrbList = [self.orbital_on_grid(i).astype(dtype) for i in self.didx]
-        self.Flist = None
+        self.Flist   = None
     
-    def evaluate_density(self, DM, UT = None, tol = 1e-5, use_numba = False, Sij = None):
+    def evaluate_density(self, DM, UT = None, tol = 1e-7, use_numba = False, Sij = None):
         if UT is not None:
             _DM = UT@DM@UT.conj().T
         else:
