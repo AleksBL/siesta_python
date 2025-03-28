@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Aug 23 11:31:42 2022
+
+@author: aleksander
+"""
+
+from siesta_python.DFTOrbitals import DFTOrbitals
+import sisl
+import joblib as jl
+import sys
+import os
+#from siesta_python.funcs import unique_list
+import numpy as np
+from numba import njit, prange
+from numba.typed import List
+from time import time
+from siesta_python.coulomb import equiv
+
+
+
+args = sys.argv[1:]
+print('FourCenterIntegral Program Start')
+print('This Code is a wrapper for the code found at\n')
+print('https://github.com/humeniuka/becke_multicenter_integration#id2')
+print('All credits to this guy')
+print('')
+print('')
+print('sys.argv:', sys.argv)
+print('')
+
+options = {
+           'DirName': 'noname',
+           'nprocs': '4',
+           'verbose': '1',
+           'backend': 'multiprocessing',
+           'OutFile': 'CoulombIntegrals',
+           'MaxR': '5.0',
+           'mode':'FourCenter',
+           'DeviceInds':'FCI_device_inds.npy'
+           }
+
+if '--help' in args:
+    print('You can specify these variables (no spaces allowed): ')
+    for k in options.keys():
+        print(k, ' = ', options[k])
+
+
+for a in args:
+    split = a.replace(' ', '').split('=')
+    options.update({split[0]:split[1]})
+
+
+DirName = options['DirName']
+
+
+path       = args[0].replace(' ', '').split('=')[1]
+os.chdir(path)
+new_folder = os.getcwd()
+sys.path.append(new_folder)
+hsfile = None
+
+for f in os.listdir(DirName):
+    if '.TSHS' in f:
+        hsfile = f
+        break
+
+if hsfile is None:
+    print('No HS-file found. Run a siesta/transiesta calculation.')
+    exit()
+
+HS  = sisl.get_sile(DirName+'/'+hsfile).read_hamiltonian()
+structfile = sisl.get_sile(DirName+'/'+'STRUCT.fdf').read_geometry()
+Orbitals = DFTOrbitals(DirName, np.array(structfile.atoms.Z), N = 10, force_uneven = False)
+Orbitals.set_pos(structfile.xyz.copy())
+
+
+
+
+
+
+no  = HS.no
+xyz = structfile.xyz
+S = np.zeros((no,no))
+for i in range(no):
+    for j in range(no):
+        rij = np.linalg.norm(xyz[Orbitals.i2a(i)] - xyz[Orbitals.i2a(j)])
+        if rij<float(options['MaxR']):
+            S[i,j] = 100.0 #arbitrary value larger than zero
+
+@njit
+def find_indices(S, dev_inds):
+    Indices = [(-1,-1,-1,-1)]
+    tol = 1.0
+    count = 0
+    for i in dev_inds:#range(no):
+        print(count,' out of ',len(dev_inds))
+        gdev_inds_1 = dev_inds[dev_inds>=i]
+        for j in gdev_inds_1:#range(i,no):
+            asij = S[i,j]
+            if asij>tol:
+                for k in dev_inds:#range(no):
+                    gdev_inds_2 = dev_inds[dev_inds>=k]
+                    for l in gdev_inds_2:#range(k,no):
+                        if S[k,l]>tol:
+                            t = (i,j,k,l)
+                            eq_t = equiv(t)
+                            In_list = False
+                            for tups in eq_t:
+                                if tups in Indices:
+                                    In_list = True
+                                    break
+                            if not In_list:
+                                Indices += [t]
+        count+=1
+    return Indices[1:]
+
+if options['mode'] == 'FourCenter':
+    print('Finding Unique Coulomb Integrals')
+    t1 = time()
+    
+    try:    d_inds = np.load(options['DeviceInds'])
+    except: d_inds = np.arange(no)
+    
+    print('Device Indices: ', d_inds)
+    Indices = find_indices(S, d_inds)
+    t2 = time()
+    print('Search Took ', t2-t1, ' Seconds')
+    print('Calculating ', len(Indices), ' Coulomb Integrals')
+    
+    def EP(t):
+        print('Calculating ', t,'!')
+        i,j,k,l = t
+        return (i,j,k,l), Orbitals.becke_electron_repulsion(i,j,k,l, Time = False)
+    
+    Res = jl.Parallel(n_jobs  = int(options['nprocs']), 
+                      verbose = int(options['verbose']),
+                      backend = options['backend']
+                      )(jl.delayed(EP)(t) for t in Indices)
+    
+    def nopiv2piv(t_idx):
+        return (np.where(d_inds == t_idx[0])[0][0],
+                np.where(d_inds == t_idx[1])[0][0],
+                np.where(d_inds == t_idx[2])[0][0],
+                np.where(d_inds == t_idx[3])[0][0],
+                )
+    Inds         = np.array([          Res[i][0]  for i in range(len(Res))])
+    AfterPivInds = np.array([nopiv2piv(Res[i][0]) for i in range(len(Res))]) 
+    Vals         = np.array([Res[i][1]            for i in range(len(Res))])
+    np.savez(options['OutFile'],
+             inds = Inds,
+             Vals = Vals,
+             Device_indices = d_inds,
+             AfterPivInds   = AfterPivInds)
+
+if options['mode']=='dipole':
+    print('Finding dipole matrix elements of orbitals')
+    try:
+        d_inds = np.load('FCI_device_inds.npy')
+    except:
+        d_inds = np.arange(no)
+    ##### 
+    try: 
+        U = np.load('FCI_device_overlap.npy')
+    except:
+        U = None
+        
+    mat = np.zeros((len(d_inds), len(d_inds),3), dtype = np.complex128)
+    for _i,i in enumerate(d_inds):
+        for _j,j in enumerate(d_inds):
+            mat[_i, _j] = Orbitals.becke_electronic_dipole(i, j, U = U)
+    np.savez(options['OutFile'],
+            Device_indices = d_inds,
+            dipole_matrix_elements = mat)
+
+if options['mode']=='overlap':
+    print('Finding overlap matrix elements of orbitals')
+    try:
+        d_inds = np.load('FCI_device_inds.npy')
+    except:
+        d_inds = np.arange(no)
+        
+    mat = np.zeros((len(d_inds), len(d_inds)), dtype = np.complex128)
+    for _i,i in enumerate(d_inds):
+        for _j,j in enumerate(d_inds):
+            mat[_i, _j] = Orbitals.becke_overlap(i, j)
+    np.savez(options['OutFile'],
+            Device_indices = d_inds,
+            overlap_matrix_elements = mat)
+
+
+if options['mode']=='nuclear':
+    from tqdm import tqdm
+    
+    print('Finding Nuclear-electronic attraction matrix elements of orbitals')
+    try:
+        d_inds = np.load('FCI_device_inds.npy')
+    except:
+        d_inds = np.arange(no)
+        
+    mat = np.zeros((len(d_inds), len(d_inds)), dtype = np.complex128)
+    for _i,i in tqdm(enumerate(d_inds)):
+        for _j,j in enumerate(d_inds):
+            mat[_i, _j] = Orbitals.becke_nuclear(i, j)
+    np.savez(options['OutFile'],
+             Device_indices = d_inds,
+             nuclear_matrix_elements = mat)
+    
