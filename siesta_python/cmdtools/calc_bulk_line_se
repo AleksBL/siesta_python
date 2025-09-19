@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Dec 10 11:42:34 2024
+
+@author: investigator
+"""
+
+#from AdaptiveIntegrate.surfgf import surface_self_energy, do_integrate, dointpar
+from AdaptiveIntegrate.linegf import line_self_energy, do_integrate
+from AdaptiveIntegrate.twodimint_radon import grid_init
+from scipy.spatial import Delaunay
+from scipy.sparse import find
+import sys
+import os
+import numpy as np
+import sisl
+from mpi4py import MPI
+from time import sleep, time
+
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
+args = sys.argv[1:]
+
+print('calc_bulk_line_se Program Start (rank: '+str(rank)+' of '+str(size-1)+')')
+if rank==0:
+    print('')
+    print('sys.argv:', sys.argv)
+    print('')
+
+options = {'Contour':'contour.npy',
+           'tol':'1e-2',
+           'surface_ham':'surfH.TSHS',
+           'bulk_ham':'bulkH.TSHS',
+           'buffer_atoms':'None',
+           'se_tx':'1',
+           'se_ty':'1',
+           'tx':'1',
+           'ty':'1',
+           'tol_elec_pos':'1e-3',
+           'sleeptime':'0.5',
+           'tmp_save_dir':'_tmp_se',
+           'bulk_se':'False' ,
+           'debug_with_sisl':'True',
+           'sisl_dk':'400.0', 
+           'coupling_tol':'1e-4',
+           'pivot_start':'None',
+           'use_se_interpolation':'False',
+           'kx': 'None',
+           'ky': 'None',
+           }
+
+if '--help' in args:
+    print('You can specify these variables (no spaces allowed): ')
+    for k in options.keys():
+        print(k, ' = ', options[k])
+    exit()
+for a in args:
+    split = a.replace(' ', '').split('=')
+    options.update({split[0]:split[1]})
+path       = args[0].replace(' ', '').split('=')[1]
+os.chdir(path)
+
+tol   = float(options['tol'])
+if options['bulk_se']=='True':
+    bulk_se = True
+elif options['bulk_se']=='False':
+    bulk_se = False
+
+se_tx = int(options['se_tx'])
+se_ty = int(options['se_ty'])
+tx    = int(options['tx'])
+ty    = int(options['ty'])
+tol_elec_pos = float(options['tol_elec_pos'])
+sleeptime    = float(options['sleeptime'])
+
+if options['kx']!='None':
+    kx = float(options['kx'])
+else:
+    kx = None
+if options['ky']!='None':
+    ky = float(options['ky'])
+else:
+    ky = None
+
+if options['buffer_atoms']!='None':
+    buffer_atoms = np.load(options['buffer_atoms']) 
+else:
+    buffer_atoms = None
+
+if options['debug_with_sisl']=='True':
+    sisl_debug = True
+else:
+    sisl_debug = False
+
+tmpdir = options['tmp_save_dir']
+if rank == 0:
+    T_start = time()
+    try:
+        os.mkdir(tmpdir)
+    except:
+        for f in os.listdir(tmpdir):
+            os.remove(tmpdir+'/'+f)
+    C     = np.load(options['Contour'])
+    avail = [True, ]*(size-1)
+    retn  = [None, ]*(size-1)
+    def get_status():
+        return [r.get_status() for r in retn]
+    c_count = 0
+    for c in C:
+        while any(avail)==False:
+            stats = get_status()
+            if any(stats):
+                avail[stats.index(True)]=True
+            sleep(sleeptime)
+        dest = avail.index(True)
+        _sendreq = comm.isend(c, dest=dest+1, tag=11)
+        _sendreq.wait()
+        avail[dest] = False
+        retn [dest] = comm.irecv(source = dest+1, tag=2)
+        c_count += 1
+        print('rank 0: Sent '+str(c_count)+' out of '+str(C.size) +'!  (r-0 -> r-'+str(dest+1)+')')
+    for i in range(1, size):
+        _sendreq = comm.isend('stop', dest=i, tag=11)
+        _sendreq.wait()
+    comm.Barrier()
+    T_end = time()
+    print('-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+')
+    print('rank 0: TOTAL RUNTIME+-+-+-+-+')
+    print('rank 0: '+str(np.round((T_end - T_start)/60,2)) + ' MINUTES')
+    print('-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+')
+else:
+    He = sisl.get_sile(options['bulk_ham']).read_hamiltonian()
+    Hs = sisl.get_sile(options['surface_ham']).read_hamiltonian()
+    if buffer_atoms is not None:
+        Hs = Hs.remove(buffer_atoms)
+    if sisl_debug:
+        _idx = np.argsort(He.xyz[:, 2] + 1e-3*He.xyz[:,1] + 1e-5*He.xyz[:,0])
+        He  = He.sub(_idx)
+        _idx = np.argsort(Hs.xyz[:, 2] + 1e-3*Hs.xyz[:,1] + 1e-5*Hs.xyz[:,0])
+        Hs  = Hs.sub(_idx)
+        del _idx
+    He_tiled = He.tile(se_tx, 0).tile(se_ty, 1)
+    ei = np.array([np.where(np.linalg.norm(Hs.xyz - He_tiled.xyz[i], axis=1)<tol_elec_pos)[0][0] 
+                   for i in range(He_tiled.na)])
+    eorb = np.hstack([np.arange(Hs.a2o(i), Hs.a2o(i+1)) for i in ei])
+    if options['pivot_start'] == 'None':
+        pivstart = Hs.no//5
+    else:
+        pivstart = int(options['pivot_start'])
+    Htot = Hs.tile(tx,0).tile(ty,1)
+    Hcoup= Htot.copy()
+    if kx is None:
+        k_in = (0, ky, 0)
+        idx_null = Htot.geometry.isc_off[0,:,0].copy()
+        Htot.set_nsc((1,Htot.nsc[1],1))
+    elif ky is None:
+        k_in = (kx, 0, 0)
+        idx_null = Htot.geometry.isc_off[:,0,0].copy()
+        Htot.set_nsc((Htot.nsc[0],1,1))
+    else:
+        print('No integration direction chosen, it seems! stopping" STOP')
+        assert 1 == 0
+    
+    H0 = Htot.Hk(k = k_in)
+    S0 = Htot.Sk(k = k_in)
+    tmpH = Hcoup.tocsr(dim=0)
+    tmpS = Hcoup.tocsr(dim=1)
+    for _i in idx_null:
+        tmpH[:, _i*Hcoup.no:(_i + 1)*Hcoup.no] = 0.0
+        tmpS[:, _i*Hcoup.no:(_i + 1)*Hcoup.no] = 0.0
+    Hcoup= sisl.Hamiltonian.fromsp(Hcoup.geometry, tmpH, tmpS)
+    # Couplings from surface part
+    tmp  = Hcoup.Hk() + Hcoup.Sk()
+    
+    assert He.nsc[2]==3
+    # Semi-inf direction = -C!!!!
+    # Couplings into bulk part
+    He_coup = He_tiled.tile(tx, 0).tile(ty, 1)
+    scidx_hopup = [i for i in range(np.prod(He_coup.nsc)) 
+                   if (He_coup.o2isc(i*He_coup.no)[2] == -1)]
+    mat = He_coup.Hk()*0.0
+    all_meH = He_coup.tocsr(dim = 0)
+    all_meS = He_coup.tocsr(dim = 1)
+    for isc in scidx_hopup:
+        isc_1, isc_2 = isc*He_coup.no, (isc+1)*He_coup.no
+        mat += all_meH[:, isc_1:isc_2] +all_meS[:, isc_1:isc_2]
+    idx_elec = []
+    for ia in range(He_coup.na):
+        dist = np.linalg.norm(He_coup.xyz[ia] - Hcoup.xyz, axis=1)
+        if dist.min()>1e-5:
+            print('Warning: distance between elec pos and device pos >1e-5  ('+str(dist.min())+')')
+        elif dist.min()>1e-2:
+            print('error distance between elec pos and device pos >1e-2, throwing error! ('+str(dist.min())+')')
+            assert 1 == 0
+        idx_elec += [np.where(dist<1e-2)[0][0]]
+    idx_elec = np.array(idx_elec)
+    io_elec  = Hcoup.a2o(idx_elec, all=True)[:, None]
+    tmp[io_elec, io_elec.T] += mat
+    if rank == 1:
+        try:
+            from os import environ
+            print('NUMBA_NUM_THREADS: ', environ['NUMBA_NUM_THREADS'])
+        except:
+            pass
+        
+        Htot.write(tmpdir+'/Htot.TSHS')
+    coups,_,_ = find(abs(tmp)>float(options['coupling_tol']))
+    coups   = np.unique(coups)
+    coups_a = np.unique(Hcoup.o2a(coups))
+    coups   = np.hstack([Hcoup.a2o(a, all=True) for a in coups_a])[:, None]
+    if rank == 1:
+        np.save(tmpdir+'/coups_a.npy', coups_a)
+        np.save(tmpdir+'/coups.npy', coups)
+    Ic      = np.eye(len(coups)).astype(np.complex128)
+    icoups  = np.array([i for i in range(Hcoup.no)
+                        if i not in coups])[:, None].astype(np.int32)
+    calc = line_self_energy(Hs, He, tx,  ty, eorb,
+                            se_tx=se_tx, se_ty=se_ty, pivot_start = pivstart)
+    if rank == 1:
+        print('--------')
+        print('Surface H:')
+        print(Hs)
+        print('--------')
+        print('Electrode H:')
+        print(He)
+        print('--------------')
+        print('BTD structure surface H: ' + str(calc.gf.btd))
+        print('--------------')
+    
+    if sisl_debug:
+        sisl_recse = sisl.physics.RecursiveSI(He, '-C', eta = .05)
+        sisl_rssi  = sisl.physics.RealSpaceSI(sisl_recse, Hs, (0, ), 
+                                              unfold=(tx, ty, 1), 
+                                              dk=float(options['sisl_dk']),
+                                              eta=.05, semi_bulk=False, trs=False)
+    while True:
+        req = comm.irecv(source=0, tag=11)
+        energy  = req.wait()
+        if isinstance(energy, str):
+            break
+        t1    = time()
+        calc.gf.set_E(energy)
+        gi, err, xlist = do_integrate(calc.gf,   atol=tol, 
+                                      rtol= 0.0, kx=kx, ky=ky, )
+        t2    = time()
+        print('rank '+str(rank)+': Integr. at z='+str(np.round(energy, 3))+' took '
+              + str(np.round(t2-t1,1))+' sec. Err = '+np.format_float_scientific(err, exp_digits=2, precision=3) 
+              + '. #pnts '+str(len(xlist)))
+        # Should give the same as "bulk=True and coupling=True" in the sisl.realspaceSI self energy.
+        # In this (calc_bulk_line_se) I dont think sisl calculates the same thing,
+        # See documentation for k-point sampling for surrounding SE.
+        # So it shouldnt be expected to be the same. 
+        # ie. if debugging, dont be alarmed if the result doesnt
+        # agree with the sisl result.
+        if sisl_debug:
+            print('sisl_dk: ', float(options['sisl_dk']))
+            print(gi.shape)
+            sisl_rssi.set_options(eta=energy.imag, k=k_in)
+            si_se = sisl_rssi.green(energy)
+            diff  = np.abs(gi - si_se).max()
+            print('Diff between sisl gf and this codes gf: ', diff)
+            print('Gi & sisl abssum: '+str(np.abs(gi).sum())+' '+str(np.abs(si_se).sum()))
+            print('Maxval gf: ', np.abs(gi).max())
+        SeH = (S0[icoups, coups.T]*energy - H0[icoups, coups.T]).toarray()
+        gi  = np.linalg.solve(gi[coups, coups.T],
+                              Ic - gi[coups, icoups.T] @ SeH)
+        np.savez_compressed(tmpdir+'/'+str(energy)+'.npz', 
+                            se_ele = gi.astype(np.complex64),)
+        _sendreq = comm.isend(True, dest = 0, tag=2)
+        _sendreq.wait()
+    
+    comm.Barrier()
+    
+        
