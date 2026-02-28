@@ -13,10 +13,8 @@ from AdaptiveIntegrate.surfgf_exp_v6 import (surface_self_energy,
 from AdaptiveIntegrate.twodimint_radon import grid_init
 from scipy.spatial import Delaunay
 from scipy.sparse import find
-import sys
-import os
+import sys, os, sisl
 import numpy as np
-import sisl
 from mpi4py import MPI
 from time import sleep, time
 
@@ -52,8 +50,10 @@ options = {'Contour':'contour.npy',
            'pivot_start':'None',
            'use_se_interpolation':'False',
            'grid_atol':'0.0033',  # used if use_se_interpolation=True
-           'grid_rtol':'0.0033', # used if use_se_interpolation=True
-           'grid_Amin':'1e-10'   # used if use_se_interpolation=True
+           'grid_rtol':'0.0033',  # used if use_se_interpolation=True
+           'grid_Amin':'1e-10',   # used if use_se_interpolation=True
+           'calc_overlap_corrections':'False' # For calculating electrode-device 
+                                              # overlap correction for TD calculation.
            }
 
 if '--help' in args:
@@ -115,6 +115,9 @@ if rank == 0:
     def get_status():
         return [r.get_status() for r in retn]
     c_count = 0
+    
+    if options['calc_overlap_corrections'] == 'True':
+        C = [c for c in C] + ['overlap_corrections']
     for c in C:
         while any(avail)==False:
             stats = get_status()
@@ -127,7 +130,7 @@ if rank == 0:
         avail[dest] = False
         retn [dest] = comm.irecv(source = dest+1, tag=2)
         c_count += 1
-        print('rank 0: Sent '+str(c_count)+' out of '+str(C.size) +'!  (r-0 -> r-'+str(dest+1)+')')
+        print('rank 0: Sent '+str(c_count)+' out of '+str(len(C)) +'!  (r-0 -> r-'+str(dest+1)+')')
     for i in range(1, size):
         _sendreq = comm.isend('stop', dest=i, tag=11)
         _sendreq.wait()
@@ -248,11 +251,22 @@ else:
         #icoups = np.array([i for i in range(Hcoup.no) if i not in coups[:, 0]]).astype(np.int32)
         #icoups = icoups[:, None]
         #print(coups.shape)
+    calc_overlap_cor = False
     while True:
         req = comm.irecv(source=0, tag=11)
         energy  = req.wait()
+        
+        # Assert that the overlap correction calculation should be the
+        # last calculation done for whatever process it ends up in.
+        assert (calc_overlap_cor == False or energy == 'stop')
         if isinstance(energy, str):
-            break
+            if energy == 'stop':
+                break
+            elif energy == 'overlap_corrections':
+                ## Set for calculation of overlap 
+                calc.nullify_h()
+                calc.gf.set_E(1.0 + 1e-4j)
+                calc_overlap_cor = True
         t1    = time()
         # if use_se_interpolation:
         #     t1_grid = time()
@@ -267,7 +281,10 @@ else:
         #     calc.gf.use_interpolate = True
         #     t2_grid = time()
         #     print('rank '+str(rank)+': Done (' +str(t2_grid - t1_grid)+'), #tri, #starttri = '+str(calc.gf.tri.shape[0])+', '+str(calc.gf.start_tri.shape[0]))
-        calc.gf.set_E(energy)
+        if isinstance(energy, str) == False:
+            calc.gf.set_E(energy)
+        else:
+            energy = 1.0 + 1e-4j
         gi, err, nsd, feval = dointpar(calc.gf, pnts, simpl, energy, tol, minarea)
         # gi, err, nsd, feval = do_integrate(calc.gf, pnts, simpl, energy, tol, minarea)
         t2    = time()
@@ -286,9 +303,19 @@ else:
             print('Diff between sisl gf and this codes gf: ', diff)
             print('Gi & sisl abssum: '+str(np.abs(gi).sum())+' '+str(np.abs(si_se).sum()))
             print('Maxval gf: ', np.abs(gi).max())
-        SeH = (S0[icoups, coups.T]*energy - H0[icoups, coups.T]).toarray()
-        gi  = np.linalg.solve(gi[coups, coups.T],
-                              Ic - gi[coups, icoups.T] @ SeH)
+        if not calc_overlap_cor:
+            SeH = (S0[icoups, coups.T]*energy - H0[icoups, coups.T]).toarray()
+            gi  = np.linalg.solve(gi[coups, coups.T],
+                                  Ic - gi[coups, icoups.T] @ SeH)
+        else:
+            # device-electrode overlap TD correction. 
+            # I_coups = np.eye(gi.shape[0])[:,coups]
+            # gi      = np.linalg.solve(gi, I_coups)[coups,:]
+            gi = np.linalg.inv(gi)
+            # del I_coups
+            gi = gi[coups, coups.T].copy()
+            gi *= -1.0
+            gi +=  S0[coups, coups.T].toarray()
         if sisl_debug:
             print('sisl_dk: ', float(options['sisl_dk']))
             print(gi.shape)
@@ -304,8 +331,14 @@ else:
             # print('Diff between sisl SE and this codes SE: ', diff)
             print('Gi & sisl abssum: '+str(np.abs(gi).sum())+' '+str(np.abs(si_se).sum()))
         print('gi abssum = ', np.abs(gi).sum())
-        np.savez_compressed(tmpdir+'/'+str(energy)+'.npz', 
-                            se_ele = gi.astype(np.complex64),)
+        # save as complex64 to save disk space and we dont (shouldnt) integrate 
+        # to that many decimals precisely either.
+        if calc_overlap_cor:
+            np.savez_compressed('overlap_corrections.npz', 
+                                se_ele = gi.astype(np.complex64),)
+        else:
+            np.savez_compressed(tmpdir+'/'+str(energy)+'.npz', 
+                                se_ele = gi.astype(np.complex64),)
         _sendreq = comm.isend(True, dest = 0, tag=2)
         _sendreq.wait()
     

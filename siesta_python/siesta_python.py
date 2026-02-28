@@ -1066,7 +1066,7 @@ class SiP:
         
     
     def run_tbtrans_in_dir(self,DOS_GF= False, DOS_A=False, DOS_A_ALL=False,ORBITAL_CURRENT=False, Custom = [],
-                           use_subprocess = False, wait = True, eta_elecs = None):
+                           use_subprocess = False, wait = True, eta_elecs = None, overwrite_prev=False, _silent = True):
         """ Run TBtrans calculation in folder directory_name. """
         print('Running TB-Trans in Directory: '+self.dir+ '!\n')
         self.write_tb_trans_kp()
@@ -1089,7 +1089,16 @@ class SiP:
         if eta_elecs is not None:
             List+=['TBT.Elecs.Eta '+str(eta_elecs)+'\n']
         self.write_more_fdf(List,name='TS_TBT')
-        
+        if self._has_tbt_nc_files() and overwrite_prev:
+            _out  = ''
+            if _silent:
+                _out = ' > /dev/null'
+            os.system('rm -f '+ self.dir + '/*.TBT.nc'+_out)
+            os.system('rm -f '+ self.dir + '/*.TBT_UP.nc'+_out)
+            os.system('rm -f '+ self.dir + '/*.TBT_DN.nc'+_out)
+            os.system('rm -f '+ self.dir + '/*.TBT.SE.nc'+_out)
+            os.system('rm -f '+ self.dir + '/*.TBT_UP.SE.nc'+_out)
+            os.system('rm -f '+ self.dir + '/*.TBT_DN.SE.nc'+_out)
         if use_subprocess:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
@@ -1101,9 +1110,20 @@ class SiP:
             
             return
         
+            
+        
         os.chdir(self.dir)
         os.system(command)
         os.chdir('..')
+    def _has_tbt_nc_files(self):
+        for f in os.listdir(self.dir):
+            if '.TBT.nc' in f:
+                return True
+            if '.TBT_UP.nc' in f:
+                return True
+            if '.TBT_DN.nc' in f:
+                return True
+        return False
     
     def get_potential_energy(self):
         """Read the energy of the self consistent calculation """
@@ -2030,6 +2050,9 @@ class SiP:
             H = sisl.get_sile(self.dir+'/RUN.fdf').read_hamiltonian()
             S = sisl.get_sile(self.dir+'/RUN.fdf').read_overlap()
             return H,S
+        if what=='TSDE':
+            return sisl.get_sile(self.dir +'/' +self.sl+'.TSDE').read_density_matrix()
+        
             
     
     def read_TSHS(self, front = None):
@@ -3646,6 +3669,7 @@ class SiP:
                                 do_periodic = False,
                                 kxy = None,
                                 nk_grid = None,
+                                calc_overlap_cor = "True",
                                 ):
         if do_periodic == False:
             assert kxy is None
@@ -3685,7 +3709,7 @@ class SiP:
                       " surface_ham="+sHname+" bulk_ham="+E.dir+"/"+E.sl+".TSHS "+\
                       " se_tx="+str(se_tx)+" se_ty="+str(se_ty)+" tx="+str(tx)+" ty="+str(ty)+\
                       " tol_elec_pos="+str(tol_elec_pos)+" bulk_se="+str(bulk_se) + " debug_with_sisl="+str(debug_with_sisl)+\
-                      " pivot_start="+piv_str + " use_se_interpolation="+use_se_interp+" "
+                      " pivot_start="+piv_str + " use_se_interpolation="+use_se_interp + " calc_overlap_corrections="+calc_overlap_cor
             if do_periodic:
                 assert kxy[0] is None or kxy[1] is None
                 command = command.replace('calcbulkse', 'calc_bulk_line_se')

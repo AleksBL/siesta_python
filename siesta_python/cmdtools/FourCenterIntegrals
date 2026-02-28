@@ -24,7 +24,7 @@ args = sys.argv[1:]
 print('FourCenterIntegral Program Start')
 print('This Code is a wrapper for the code found at\n')
 print('https://github.com/humeniuka/becke_multicenter_integration#id2')
-print('All credits to this guy')
+print('Thank you very much for writing such a versatile program humeniuka!')
 print('')
 print('')
 print('sys.argv:', sys.argv)
@@ -38,7 +38,9 @@ options = {
            'OutFile': 'CoulombIntegrals',
            'MaxR': '5.0',
            'mode':'FourCenter',
-           'DeviceInds':'FCI_device_inds.npy'
+           'DeviceInds':'FCI_device_inds.npy',
+           'print':'False',
+           'restrict':'ijkl'
            }
 
 if '--help' in args:
@@ -75,6 +77,20 @@ structfile = sisl.get_sile(DirName+'/'+'STRUCT.fdf').read_geometry()
 Orbitals = DFTOrbitals(DirName, np.array(structfile.atoms.Z), N = 10, force_uneven = False)
 Orbitals.set_pos(structfile.xyz.copy())
 
+if options['restrict'] == 'ijkl':
+    def _restr(i,j,k,l):
+        return True
+elif options['restrict'] == 'iijj':
+    def _restr(i,j,k,l):
+        if i == j and k == l:
+            return True
+        return False
+elif options['restrict'] == 'iiii':
+    def _restr(i,j,k,l):
+        if i == j and k == l and k == i:
+            return True
+        return False
+    
 
 
 
@@ -130,9 +146,17 @@ if options['mode'] == 'FourCenter':
     print('Calculating ', len(Indices), ' Coulomb Integrals')
     
     def EP(t):
-        print('Calculating ', t,'!')
         i,j,k,l = t
-        return (i,j,k,l), Orbitals.becke_electron_repulsion(i,j,k,l, Time = False)
+        _calc = _restr(i,j,k,l)
+        rep = np.nan
+        if _calc:
+            rep = Orbitals.becke_electron_repulsion(i,j,k,l, Time = False)
+        
+        if options['print']=='True' and np.isnan(rep)==False:
+            print('Calculating ', t,'!')
+            print(str((i,j,k,l)) + ' = ' + str(rep) )
+        
+        return (i,j,k,l), rep
     
     Res = jl.Parallel(n_jobs  = int(options['nprocs']), 
                       verbose = int(options['verbose']),
@@ -192,7 +216,6 @@ if options['mode']=='overlap':
 
 if options['mode']=='nuclear':
     from tqdm import tqdm
-    
     print('Finding Nuclear-electronic attraction matrix elements of orbitals')
     try:
         d_inds = np.load('FCI_device_inds.npy')
