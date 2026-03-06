@@ -139,6 +139,10 @@ Dev = SiP(device.cell, device.xyz, device.to.ase().numbers,
 
 Dev.find_elec_inds(tol = 1e-2) # If you place your atoms 
 Dev.set_buffer_atoms(buffer_atoms)
+# At this point you can inspect the Dev object with e.g "Dev.ase_visualise(elec_replace=78, buffer_replace=77)"
+# and you would see your device, but with clear indications of where the buffer and electrode atoms are
+# you can also not specify these keywords and you'll see the device as it is. 
+
 
 # Run
 Dev.fdf()
