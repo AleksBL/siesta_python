@@ -14,6 +14,20 @@ Created on Tue Sep 20 13:11:58 2022
 import numpy as np
 import scipy.sparse as sp
 
+class fakeGeom:
+    def __init__(self, xyz, cell, atoms, a2o):
+        self.xyz = xyz, 
+        self.cell = cell
+        self.atoms = _fakeAtoms(atoms)
+        self._a2o = a2o
+    def a2o(self, i, all=False):
+        if all==False:
+            return self._a2o[i]
+        else:
+            return np.arange(self._a2o[i], self._a2o[i+1])
+class _fakeAtoms:
+    def __init__(self,numbers):
+        self.Z = numbers
 
 class fakeTBT:
     # Fake class for emulating/parsing TBtrans / sisl output
@@ -44,6 +58,14 @@ class fakeTBT:
     @property
     def k(self):    return self.npz['kv']
     def read_fermi_level(self): return self.npz['E_F']
+    @property
+    def geometry(self):
+        g = fakeGeom( self.npz["geom_xyz"], 
+                      self.npz["geom_cell"],
+                      self.npz["geom_atoms"],
+                      self.npz["geom_a2o"] 
+                      )
+        return g
 
 
 class fakeHS:

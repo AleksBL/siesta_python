@@ -3328,9 +3328,7 @@ class SiP:
             #                        translate(e.semi_inf)) ]
             #else:
             SEs += [RecursiveSI(e.read_TSHS(e.sl), 
-                                translate(e.semi_inf)) ]
-        
-        
+                                translate(e.semi_inf))]
         
         eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
                    for se in SEs]
@@ -3373,7 +3371,6 @@ class SiP:
         S = np.vstack([Hd.Sk(spin=0).toarray()[None,:,:],
                        Hd.Sk(spin=1).toarray()[None,:,:]
                       ])
-        
         kv = np.array([[0,0          , 0],
                        [0,0.123456789, 0]])
         
@@ -3384,7 +3381,6 @@ class SiP:
         
         #replace the real file with the fake
         os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
-        
         
         G0 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 0).toarray()
         G1 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 1).toarray()
@@ -3424,8 +3420,14 @@ class SiP:
                                           Tij1[:,0,1]]),
                  kv           = kv,
                  wkpt         = [1, 1],
-                 E_F          = 0.0
+                 E_F          = 0.0,
+                 geom_xyz     = self.pos_real_space,
+                 geom_cell    = self.lat, 
+                 geom_atoms   = self.s,
+                 geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)])
                  )
+        
+        
     def is_RSSE(self):
         if self.elec_2E_RSSE:
             return True
