@@ -1,6 +1,0 @@
-numpy
-numba
-seekpath
-spglib
-sisl
-scipy
