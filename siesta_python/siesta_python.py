@@ -398,7 +398,7 @@ class SiP:
         try:
             if self.skip_spg_sp:
                 assert 1 == 0
-            self.standard_cell =  spg.standardize_cell(self.cell_spg)
+            self.standard_cell =  spg.standardize_cell(self.cell_spg, symprec=1e-3)
         except:
             self.standard_cell = None
         if self.Standardize_cell==True:
@@ -1843,7 +1843,23 @@ class SiP:
     
     def copy_TSHS_from(self, object):
         os.system('cp ' + object.dir + '/' + object.sl+'.TSHS ' + self.dir + '/' + self.sl + '.TSHS')
-    
+    def clone(self, newdir):
+        from copy import deepcopy
+        out = deepcopy(self)
+        out.dir = newdir
+        try:
+            os.mkdir(newdir)
+        except:
+            pass
+        os.system("cp "+self.dir+"/*.fdf "+newdir+"/")
+        os.system("cp "+self.dir+"/*.psf "+newdir+"/")
+        os.system("cp "+self.dir+"/*.psml "+newdir+"/")
+        
+        if self.solution_method=='transiesta':
+            out.copy_DM_from(self, ftype='TSDE')
+        else:
+            out.copy_DM_from(self,ftype='DM')
+        return out
     
     def save_file(self, file, folder, newname):
         try:
@@ -3138,10 +3154,9 @@ class SiP:
             news[N:  ]     = s
             self.set_struct(self.lat, newpos, news)
     
-    
-    
-    
-    
+    def read_fermi_level_from_out(self):
+        E_F = sisl.get_sile(self.dir + '/RUN.out{stdoutSileSiesta}').read_energy()['fermi']
+        return E_F
     
     def projection(self, Emin, Emax, sub_orbital = [], eigenstates = True, custom_v = None, return_iG = False, fromwhat='TSHS',
                    nolowdin=False):
