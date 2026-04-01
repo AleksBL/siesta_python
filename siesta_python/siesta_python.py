@@ -1854,6 +1854,7 @@ class SiP:
         os.system("cp "+self.dir+"/*.fdf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psml "+newdir+"/")
+        os.system("cp "+self.dir+"/*.ion.nc "+newdir+"/")
         
         if self.solution_method=='transiesta':
             out.copy_DM_from(self, ftype='TSDE')
