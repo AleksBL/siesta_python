@@ -1542,18 +1542,12 @@ class SiP:
                                                    'dk': dk})
         H_elec.write(self.dir + '/'+ self.sl + '.'+ending)
         H = SRSSE.real_space_parent()
-        
         np.save(self.dir + '/RS_Coupling_pos', H.xyz[elec_indices])
         np.save(self.dir + '/RS_Coupling_specie', H.atoms.Z[elec_indices])
         if only_couplings:
             return
-        
         gamma = sisl.MonkhorstPack(H_elec, [1] * 3)
         sisl.io.tableSile(self.dir + '/contour.E', 'w').write_data(E, np.zeros(E.size) + 0., fmt='.12e')
-        
-        
-        
-        
         if parallel_E:
             import joblib as Jl
             global SE_func # for multiprocessing backend

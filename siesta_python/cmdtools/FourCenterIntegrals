@@ -213,7 +213,6 @@ if options['mode']=='overlap':
             Device_indices = d_inds,
             overlap_matrix_elements = mat)
 
-
 if options['mode']=='nuclear':
     from tqdm import tqdm
     print('Finding Nuclear-electronic attraction matrix elements of orbitals')

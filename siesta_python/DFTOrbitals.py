@@ -13,12 +13,8 @@ from time import time
 from scipy.integrate import tplquad
 #import quadpy
 from Zandpack.HartreeFromDensity import make_density,matrixelementsoffield#, make_density_jit
-
-
-
+import sisl
 ld = os.listdir
-
-
 class DFTOrbitals:
     # you can probably toggle offf the force_uneven keyword.
     # its meant for when grids needs to be matched in the make_density,
@@ -27,11 +23,13 @@ class DFTOrbitals:
     # the vacuum and N keywords. Good luck.....
     
     
-    def __init__(self, Dir, s, N = 30, vacuum = 1.0, force_uneven = True):
-        
-        
+    def __init__(self, Dir, s = None, N = 30, vacuum = 1.0, 
+                 force_uneven = True, evaluate=True, ):
+        #if s is None:
+        _g = sisl.get_sile(Dir +"/RUN.fdf").read_geometry()
+        if s is None:
+            s = _g.atoms.Z.copy()
         Nr = 2 * N+1
-        
         files = ld(Dir)
         files = [file for file in files if '.ion.nc' in file]
         self.files = files
@@ -56,7 +54,10 @@ class DFTOrbitals:
             Rs       = np.hstack([x.ravel()[:,None],y.ravel()[:,None],z.ravel()[:,None]])
             
             for io,o in enumerate(B[a].orbitals):
-                Aorbs  += [o.psi(Rs).reshape(x.shape)]
+                if evaluate:
+                    Aorbs  += [o.psi(Rs).reshape(x.shape)]
+                else:
+                    Aorbs  += [np.array([[[]]])]
                 Alabels+= [(B[a].Z,io)]
                 Afuncs += [o.psi]
             orbs   += [Aorbs  ]
@@ -69,34 +70,27 @@ class DFTOrbitals:
         #print(labels)
         self.i2o()
         self.pos = None
-        
+        self.set_pos(_g.xyz)
     def set_pos(self, Ri):
         self.pos = Ri
-    
     def get_pos(self,i):
         return self.pos[self.i2a(i)]
-    
-    
-    
     def get_orbitals(self, Z):
         for ia in range(len(self.orbitals)):
             if self.labels[ia][0][0] == Z:
                 return self.orbitals[ia], ia
-            
     def get_no(self):
         no = 0
         for i in range(len(self.s)):
             orb = self.get_orbitals(self.s[i])[0]
             no += len(orb)
         return no
-    
     def i2a(self,j):
         no = 0
         for i in range(len(self.s)):
             no += len(self.get_orbitals(self.s[i])[0])
             if no>j:
                 return i
-    
     def i2o(self):
         no = self.get_no()
         pairs = []
@@ -106,17 +100,13 @@ class DFTOrbitals:
             for io in range(len(orbs)):
                 pairs += [(ia, io)]
         self.pairs = pairs
-    
     def orbital_on_grid(self,i):
         return self.orbitals[self.pairs[i][0]][self.pairs[i][1]]
-    
     def get_func(self, i):
         return self.funcs[self.pairs[i][0]][self.pairs[i][1]]
-    
     def ravelled_orbs_and_inds(self):
         o_list = []
         label_list = []
-        
         for ia,a in enumerate(self.orbitals):
             for io,o in enumerate(a):
                 o_list += [o]
@@ -124,18 +114,14 @@ class DFTOrbitals:
         i_list = []
         for i in range(self.get_no()):
             i_list += [label_list.index(self.pairs[i])]
-            
         return o_list, i_list
-    
     def becke_electron_repulsion(self, i,j,k,l,eps = 1e-5, Time = False):
         t1 = time()
-        
         v  = eps*np.ones(3)
         Ri = self.get_pos(i)-2*v
         Rj = self.get_pos(j)-  v
         Rk = self.get_pos(k)+  v
         Rl = self.get_pos(l)+2*v
-        
         def fi(x,y,z):
             s = x.shape#.copy()
             r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
@@ -152,22 +138,17 @@ class DFTOrbitals:
             s = x.shape#.copy()
             r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Rl
             return self.get_func(l)(r).reshape(s)
-        atoms = [(1, Ri),
-                 (1, Rj),
-                 (1, Rk),
-                 (1, Rl)]
+        atoms = [(1, Ri), (1, Rj),
+                 (1, Rk), (1, Rl)]
         val = becke.electron_repulsion(atoms, fi, fj, fk, fl)
         t2 = time()
         if Time:
             print('Fourcenter integral evaulated in : ',t2-t1, 's')
-            
         return val
-    
     def becke_overlap(self,i,j, eps =1e-5 ):
         v  = eps*np.ones(3)
         Ri = self.get_pos(i)-0.5*v
         Rj = self.get_pos(j)+0.5*v
-        
         def fi(x,y,z):
             s = x.shape#.copy()
             r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
@@ -179,15 +160,12 @@ class DFTOrbitals:
         atoms = [(1, Ri),
                  (1, Rj),
                 ]
-        
         return becke.overlap(atoms, fi,fj)
-    
     def becke_electronic_dipole(self, i,j, eps = 1e-5, U = None):
         v  = eps*np.ones(3)
         Ri = self.get_pos(i)-0.5*v
         Rj = self.get_pos(j)+0.5*v
         if U is None:
-            
             def fi(x,y,z):
                 s = x.shape
                 r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
@@ -218,15 +196,12 @@ class DFTOrbitals:
             atoms = [(1, Ri),
                      (1, Rj),
                      ]
-        
         return becke.electronic_dipole(atoms, fi, fj)
-    
     def becke_nuclear(self, i,j, eps = 1e-5, U = None):
         v  = eps*np.ones(3)
         Ri = self.get_pos(i)-0.5*v
         Rj = self.get_pos(j)+0.5*v
         if U is None:
-            
             def fi(x,y,z):
                 s = x.shape
                 r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])-Ri
@@ -257,10 +232,7 @@ class DFTOrbitals:
             atoms = [(1, Ri),
                      (1, Rj),
                      ]
-        
         return becke.nuclear(atoms, fi, fj)
-    
-    
     def becke_new_overlap(self, i,j, eps = 1e-5, U = None, vac = 10.0, quadpy_N = None):
         v  = eps*np.ones(3)
         Ri = self.get_pos(i)-0.5*v
@@ -300,7 +272,6 @@ class DFTOrbitals:
         xmin, xmax = min(Ri[0], Rj[0])-vac, max(Ri[0], Rj[0])+vac
         ymin, ymax = min(Ri[1], Rj[1])-vac, max(Ri[1], Rj[1])+vac
         zmin, zmax = min(Ri[2], Rj[2])-vac, max(Ri[2], Rj[2])+vac
-        
         def F(z,y,x):
             _x = np.array([x])
             _y = np.array([y])
@@ -360,9 +331,6 @@ class DFTOrbitals:
             _vac[cond() == 0]+= step
             tpos = np.array([self.get_pos(i) for i in self.didx])
             tpos_min = tpos.min(axis=0)
-            #print(tpos_min.shape)
-            
-            #_Lx,_Ly,_Lz = np.max(tpos,axis=0) - np.min(tpos,axis=0) + vac
             tpos[:,0]-=tpos[:,0].min()
             tpos[:,1]-=tpos[:,1].min()
             tpos[:,2]-=tpos[:,2].min()
@@ -372,16 +340,12 @@ class DFTOrbitals:
             Lz = tpos[:,2].max() + _vac[2] 
             Nx, Ny, Nz = int(Lx/self.dx), int(Ly/self.dx),int(Lz/self.dx)
             Nxyz       = np.array([Nx,Ny,Nz])
-            #print(it)
             it+=1
-        #print(_vac)
-            
         self.Dens    = np.zeros((Nx, Ny, Nz), dtype  = dtype)
         self.fpos    = tpos / self.dx
         self.StaticDens = StaticDens
         self.OrbList = [self.orbital_on_grid(i).astype(dtype) for i in self.didx]
         self.Flist   = None
-    
     def evaluate_density(self, DM, UT = None, tol = 1e-7, use_numba = False, Sij = None):
         if UT is not None:
             _DM = UT@DM@UT.conj().T
@@ -389,32 +353,70 @@ class DFTOrbitals:
             _DM = DM
         if self.StaticDens is not None: self.Dens[:,:,:] = self.StaticDens
         else:                           self.Dens[:,:,:] = .0
-        
         orb_kind = [i for i in range(_DM.shape[-1])]
         rpos     = self.fpos * self.dx
         AS       = False
-        
         if self.Flist is None:
             self.Flist = make_density(self.OrbList, _DM, orb_kind, rpos, self.dx,
                                       self.Dens, self.StaticDens, tol = tol, add_static = AS, return_Flist = True,
                                       Sij = Sij)
-        
         make_density(self.OrbList, _DM, orb_kind, rpos, self.dx,
                      self.Dens, self.StaticDens, tol = tol, add_static = AS, 
                      Flist = self.Flist, Sij = Sij )
-        
         return self.Dens
-    
     def MatrixElements(self,Field, out, Sij = None, tol = 1e-5):
         rpos     = self.fpos * self.dx
         orb_kind = [i for i in range(out.shape[-1])]
         return matrixelementsoffield(self.OrbList, orb_kind, rpos, self.dx,
                                      Field, out, Flist = self.Flist, Sij = Sij, 
                                      tol = tol)
+    def fullS(self):
+        no = self.get_no()
+        S = np.zeros((no, no), dtype=complex)
+        for i in range(no):
+            for j in range(no):
+                if i<j:
+                    pass
+                else:
+                    S[i,j] = self.becke_overlap(i, j, eps=1e-4)
+                    S[j,i] = np.conj(S[i,j])
+        self._Overlap = S
+    def check_basis_completeness(self, R, sv, Rcut = 10.0):
+        s = np.array(sv)
+        if s.ndim < 1:
+            s = s[None]
+        no = self.get_no()
+        S_delta = np.zeros((no, len(s)), dtype=complex)
+        Saug = np.zeros((no+1, no+1),dtype=complex)
+        Saug[:-1, :-1] = self._Overlap
+        SVD_vals = np.zeros((no+1, len(s)), dtype=complex)
+        for i, spread in enumerate(sv):
+            def delta(x,y,z):
+                ### Ad hoc normalization,
+                ### Could be more elegant.
+                rv = np.zeros((len(x), 3))
+                rv[:, 0] = x; rv[:, 1] = y; rv[:, 2] = z
+                rv -= R
+                D = np.linalg.norm(rv, axis=1)
+                A = np.eye(3) * spread
+                res = np.exp(-((D**2)/(2 * spread**2))) /( np.sqrt(4 * np.pi *  np.linalg.det(A))) 
+                res/= np.sqrt(0.4431151341205629)
+                return res
+            fi = delta
+            for j in range(self.get_no()):
+                Rj = self.get_pos(j)
+                def fj(x,y,z):
+                    s = x.shape#.copy()
+                    r = np.hstack([x.ravel()[:,None], y.ravel()[:,None], z.ravel()[:,None]])- Rj
+                    return self.get_func(j)(r).reshape(s)
+                atoms = [(1, R ),
+                         (1, Rj)]
+                if np.linalg.norm(R - Rj)<Rcut:
+                    S_delta[j, i] = becke.overlap(atoms, fi,fj)
+            Saug[-1,-1]   = 1.0
+            Saug[:-1, -1] = S_delta[:, i]
+            Saug[-1, :-1] = S_delta[:, i].conj()
+            SVD_vals[:, i] = np.linalg.svdvals(Saug)
+        return SVD_vals# S_delta
     
-    
-        
-    
-    
-        
-    
+            
