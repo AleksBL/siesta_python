@@ -56,7 +56,8 @@ Num2Sym={1:'H', 2: 'He', 3:'Li',
          -5:  'B_ghost',
          -6:  'C_ghost',
          -7:  'N_ghost',
-         -79: 'Au_ghost'
+         -79: 'Au_ghost',
+         -100:'Bess',
          }
 Sym2Num = {v: k for k, v in Num2Sym.items()}
 
@@ -1421,6 +1422,16 @@ def interpolate_and_fft(x,y,N):
     yy = np.pad(yy,(N//2, N//2))
     dx = xx[1] - xx[0]
     return np.fft.rfft(yy), np.fft.rfftfreq(2*N, dx)
+def interpolate_and_fft_complex(x,y,N):
+    from scipy.interpolate import interp1d
+    xx = np.linspace(x.min(), x.max(), N)
+    fr  = interp1d(x,y.real)
+    fi  = interp1d(x,y.imag)
+    yy = fr(xx) + 1j * fi(xx)
+    yy = np.pad(yy,(N//2, N//2))
+    dx = xx[1] - xx[0]
+    return np.fft.fft(yy), np.fft.fftfreq(2 * N, dx)
+
 
 def pyinds2siesta(idx):
     return listinds_to_string(numpy_inds_to_string(idx+1))

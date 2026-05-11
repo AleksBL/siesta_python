@@ -550,7 +550,7 @@ class SiP:
     
     def run_dftb_in_dir(self,silent = False, subprocess=False,wait=False):
         if silent==False:
-            command = 'dftb+ '
+            command = 'dftb+ > RUN.out'
         else:
             command = 'dftb+ > /dev/null'
         
@@ -1128,6 +1128,16 @@ class SiP:
     def get_potential_energy(self):
         """Read the energy of the self consistent calculation """
         return read_total_energy(self)
+    def get_potential_energy_dftb(self):
+        res = np.nan
+        with open(self.dir+"/RUN.out") as f:
+            lines = f.readlines()
+            for l in lines:
+                if "Total Energy" in l:
+                    res = float(l.split("H")[1].replace("eV",""))
+        os.system("rm "+self.dir+"/RUN.out")
+        return res
+                
     def get_fermi_level(self):
         """ Simple read function for the Fermi level"""
         return read_fermi_level(self)
@@ -1845,6 +1855,17 @@ class SiP:
             os.mkdir(newdir)
         except:
             pass
+        if hasattr(self,"dic"):
+            if 'dftb_charge' in self.dic.keys() or "dftb_in.hsd" in os.listdir(self.dir):
+                print("Cloning DFTB files to " + newdir)
+                def do_copy(n):
+                    os.system("cp "+self.dir+"/"+n+" "+newdir+"/")
+                do_copy("*.out")
+                do_copy("*.dat")
+                do_copy("*.hsd")
+                do_copy("*.fdf")
+                return out
+        
         os.system("cp "+self.dir+"/*.fdf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psml "+newdir+"/")
@@ -1854,6 +1875,7 @@ class SiP:
             out.copy_DM_from(self, ftype='TSDE')
         else:
             out.copy_DM_from(self,ftype='DM')
+        
         return out
     
     def save_file(self, file, folder, newname):
@@ -3150,8 +3172,13 @@ class SiP:
             self.set_struct(self.lat, newpos, news)
     
     def read_fermi_level_from_out(self):
-        E_F = sisl.get_sile(self.dir + '/RUN.out{stdoutSileSiesta}').read_energy()['fermi']
-        return E_F
+        try:
+            E_F = sisl.get_sile(self.dir + '/RUN.out{stdoutSileSiesta}').read_energy()['fermi']
+            return E_F
+        except:
+            E_F = self.dic["dftb_fermi_level"]
+            return E_F
+        
     
     def projection(self, Emin, Emax, sub_orbital = [], eigenstates = True, custom_v = None, return_iG = False, fromwhat='TSHS',
                    nolowdin=False):
@@ -3243,7 +3270,7 @@ class SiP:
             return (v.transpose(0,1,3,2).conj())@M@v
         print(H.shape)
         H  =  proj(H); Ns = H.shape[-1]
-        Sn = np.zeros(H.shape, dtype = np.complex128); Sn[:,:,np.arange(Ns), np.arange(Ns)] = 1
+        Sn =  np.zeros(H.shape, dtype = np.complex128); Sn[:,:,np.arange(Ns), np.arange(Ns)] = 1
         SE =  [proj(se) for se in SE]
         
         SiP_proj = SiP(self.lat, self.pos_real_space, s = self.s, 
