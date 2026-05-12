@@ -1856,16 +1856,17 @@ class SiP:
         except:
             pass
         if hasattr(self,"dic"):
-            if 'dftb_charge' in self.dic.keys() or "dftb_in.hsd" in os.listdir(self.dir):
-                print("Cloning DFTB files to " + newdir)
-                def do_copy(n):
-                    os.system("cp "+self.dir+"/"+n+" "+newdir+"/")
-                do_copy("*.out")
-                do_copy("*.dat")
-                do_copy("*.hsd")
-                do_copy("*.fdf")
-                return out
-        
+            if self.dic is not None:
+                if 'dftb_charge' in self.dic.keys() or "dftb_in.hsd" in os.listdir(self.dir):
+                    print("Copying DFTB files to " + newdir)
+                    def do_copy(n):
+                        os.system("cp "+self.dir+"/"+n+" "+newdir+"/")
+                    do_copy("*.out")
+                    do_copy("*.dat")
+                    do_copy("*.hsd")
+                    do_copy("*.fdf")
+                    return out
+        print("Copying SIESTA files to " +newdir)
         os.system("cp "+self.dir+"/*.fdf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psf "+newdir+"/")
         os.system("cp "+self.dir+"/*.psml "+newdir+"/")
