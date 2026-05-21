@@ -653,16 +653,16 @@ def write_relax_fdf(object, Constraints, force_tol = 0.01, max_it = 1000,
     
     force_tol = str(force_tol)
     with open(object.dir + '/MD.fdf','w') as f:
-        f.write('MD.TypeOfRun          	CG  \n')
-        f.write('MD.NumCGsteps     	'+str(max_it)+ '\n')
-        f.write('MD.MaxForceTol 	        '+ force_tol +' eV/Ang \n')
+        f.write('MD.TypeOfRun CG\n')
+        f.write('MD.NumCGsteps '+str(max_it)+ '\n')
+        f.write('MD.MaxForceTol 	'+ force_tol +' eV/Ang \n')
         if variable_cell:
-            f.write('MD.VariableCell      	T\n')
+            f.write('MD.VariableCell  T\n')
         else:
-            f.write('MD.VariableCell      	F\n')
+            f.write('MD.VariableCell F\n')
         # f.write('MD.MaxStressTol         0.0010 eV/Ang\n')
-        f.write('WriteMDHistory      	T \n')
-        f.write('WriteMDXMol  		T\n')
+        f.write('WriteMDHistory T \n')
+        f.write('WriteMDXMol T\n')
         f.write('%block Geometry.Constraints\n')
         for line in Constraints:
             f.write('    ' + line + ' \n')

@@ -1135,6 +1135,9 @@ class SiP:
             for l in lines:
                 if "Total Energy" in l:
                     res = float(l.split("H")[1].replace("eV",""))
+                elif "Total energy" in l:
+                    res = float(l.split("H")[1].replace("eV",""))
+                    
         os.system("rm "+self.dir+"/RUN.out")
         return res
                 
