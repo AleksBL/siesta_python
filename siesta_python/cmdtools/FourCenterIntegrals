@@ -8,7 +8,7 @@ Created on Tue Aug 23 11:31:42 2022
 
 from siesta_python.DFTOrbitals import DFTOrbitals
 import sisl
-import joblib as jl
+# import joblib as jl
 import sys
 import os
 #from siesta_python.funcs import unique_list
@@ -17,7 +17,12 @@ from numba import njit, prange
 from numba.typed import List
 from time import time
 from siesta_python.coulomb import equiv
+from mpi4py import MPI
+from time import sleep
 
+comm = MPI.COMM_WORLD
+rank = comm.Get_rank()
+size = comm.Get_size()
 
 
 args = sys.argv[1:]
@@ -40,7 +45,10 @@ options = {
            'mode':'FourCenter',
            'DeviceInds':'FCI_device_inds.npy',
            'print':'False',
-           'restrict':'ijkl'
+           'restrict':'ijkl',
+           'calculate_all':"False",
+           "manual_idx":"None",
+           "keep_full":"False"
            }
 
 if '--help' in args:
@@ -73,6 +81,11 @@ if hsfile is None:
     exit()
 
 HS  = sisl.get_sile(DirName+'/'+hsfile).read_hamiltonian()
+try:
+    HS  = sisl.get_sile(DirName+'/'+"RUN.fdf").read_hamiltonian()
+except:
+    pass
+
 structfile = sisl.get_sile(DirName+'/'+'STRUCT.fdf').read_geometry()
 Orbitals = DFTOrbitals(DirName, np.array(structfile.atoms.Z), N = 10, force_uneven = False)
 Orbitals.set_pos(structfile.xyz.copy())
@@ -90,7 +103,13 @@ elif options['restrict'] == 'iiii':
         if i == j and k == l and k == i:
             return True
         return False
-    
+elif options['restrict'] == '3sim':
+    def _restr(i,j,k,l):
+        n = len(np.unique([i,j,k,l]))
+        if n<=3:
+            return True
+        return False
+
 
 
 
@@ -140,7 +159,15 @@ if options['mode'] == 'FourCenter':
     except: d_inds = np.arange(no)
     
     print('Device Indices: ', d_inds)
-    Indices = find_indices(S, d_inds)
+    if options["calculate_all"]=="False":
+        Indices = find_indices(S, d_inds)
+    else:
+        Indices = []
+        for _i in d_inds:
+            for _j in d_inds:
+                for _k in d_inds:
+                    for _l in d_inds:
+                        Indices += [(_i,_j,_k,_l)]
     t2 = time()
     print('Search Took ', t2-t1, ' Seconds')
     print('Calculating ', len(Indices), ' Coulomb Integrals')
@@ -154,16 +181,48 @@ if options['mode'] == 'FourCenter':
         
         if options['print']=='True' and np.isnan(rep)==False:
             print('Calculating ', t,'!')
+            ti = HS.o2a(i)
+            il = i-HS.a2o(ti)
+            print("i="+str(HS.atoms[ti][il].name()))
+            ti = HS.o2a(j)
+            il = j-HS.a2o(ti)
+            print("j="+str(HS.atoms[ti][il].name()))
+            ti = HS.o2a(k)
+            il = k-HS.a2o(ti)
+            print("k="+str(HS.atoms[ti][il].name()))
+            ti = HS.o2a(l)
+            il = l-HS.a2o(ti)
+            print("l="+str(HS.atoms[ti][il].name()))
             print(str((i,j,k,l)) + ' = ' + str(rep) )
-        
         return (i,j,k,l), rep
-    if options["backend"]=='none':
-        Res = [EP(t) for t in Indices]
-    else:
-        Res = jl.Parallel(n_jobs  = int(options['nprocs']),
-                          verbose = int(options['verbose']),
-                          backend = options['backend']
-                          )(jl.delayed(EP)(t) for t in Indices)
+    
+    if options["manual_idx"] != "None":
+        t = [int(i) for i in options["manual_idx"].split(",")]
+        print(EP(t))
+        exit()
+        
+        
+    
+    
+    
+    Indices = np.array_split(Indices, size)[rank]
+    #Res     = [EP(t) for t in Indices]
+    Res = []
+    count = 0
+    for t in Indices:
+        if np.mod(count, 10) ==0 :
+            print("rank="+str(rank)+"Progress: "+str(100*count/len(Indices)))
+        Res += [EP(t)]
+        count +=1
+    
+    
+    #if options["backend"]=='none':
+    #    Res = [EP(t) for t in Indices]
+    #else:
+    #    Res = jl.Parallel(n_jobs  = int(options['nprocs']),
+    #                      verbose = int(options['verbose']),
+    #                      backend = options['backend']
+    #                      )(jl.delayed(EP)(t) for t in Indices)
     
     def nopiv2piv(t_idx):
         return (np.where(d_inds == t_idx[0])[0][0],
@@ -174,31 +233,59 @@ if options['mode'] == 'FourCenter':
     Inds         = np.array([          Res[i][0]  for i in range(len(Res))])
     AfterPivInds = np.array([nopiv2piv(Res[i][0]) for i in range(len(Res))]) 
     Vals         = np.array([Res[i][1]            for i in range(len(Res))])
-    np.savez(options['OutFile'],
-             inds = Inds,
-             Vals = Vals,
-             Device_indices = d_inds,
-             AfterPivInds   = AfterPivInds)
+    np.savez_compressed("_rank"+str(rank)+options['OutFile'],
+                        inds = Inds,
+                        Vals = Vals,
+                        Device_indices = d_inds,
+                        AfterPivInds   = AfterPivInds)
+    comm.Barrier()
+    sleep(1.0)
+
+    if rank == 0:
+        Inds,Vals = [], []
+        for i in range(size):
+            f = np.load("_rank"+str(i)+options['OutFile'] + ".npz")
+            Inds += [f["inds"]]
+            Vals += [f["Vals"]]
+        np.savez_compressed(options["OutFile"], 
+                            inds = np.vstack(Inds),
+                            vals = np.hstack(Vals),
+                            )
+            
+        
+            
 
 if options['mode']=='dipole':
+    from tqdm import tqdm
     print('Finding dipole matrix elements of orbitals')
     try:
         d_inds = np.load('FCI_device_inds.npy')
+        read_inds = True
     except:
         d_inds = np.arange(no)
+        read_inds = False
     ##### 
     try: 
         U = np.load('FCI_device_overlap.npy')
     except:
         U = None
-        
+    try:
+        only_inds = np.load("dipole_pivot.npy")
+    except:
+        only_inds = np.arange(no)
+    
+    
+    
     mat = np.zeros((len(d_inds), len(d_inds),3), dtype = np.complex128)
-    for _i,i in enumerate(d_inds):
+    for _i,i in tqdm(enumerate(d_inds)):
         for _j,j in enumerate(d_inds):
-            print("Calculating: "+str((i,j)))
+            # S is not the overlap, its a bad name for atoms within a cutoff radius
             if S[i,j] < 1e-3:
                 continue
+            if i not in only_inds or j not in only_inds:
+                continue
             mat[_i, _j] = Orbitals.becke_electronic_dipole(i, j, U = U)
+    
     np.savez(options['OutFile'],
             Device_indices = d_inds,
             dipole_matrix_elements = mat)

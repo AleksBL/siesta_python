@@ -534,13 +534,18 @@ class SiP:
     def dftb_hsd(self, Scc = 'Yes', write_cell = True, angmom_dic = {},
                        ReadInititialCharges = 'No', WriteChargesAsText = 'Yes', ReadChargesAsText = 'No',
                        WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
-                       ThirdOrderFull='No', HubDeriv=None,DampCor=None):
+                       ThirdOrderFull='No', HubDeriv=None,DampCor=None, 
+                       Spin=None, InitSpin=None, SpinConstants=None, CustomHubbard = None,
+                       UnpairedElectrons = 0.0):
         
         write_dftb_hsd(self, Scc = Scc, write_cell = write_cell, angmom_dic = angmom_dic,
                              ReadInitialCharges = ReadInititialCharges, WriteChargesAsText=WriteChargesAsText,
                              ReadChargesAsText=ReadChargesAsText, WriteRealHS    = WriteRealHS, 
                              CalculateForces=CalculateForces,     SkipChargeTest = SkipChargeTest,
-                             ThirdOrderFull = ThirdOrderFull, HubDeriv=HubDeriv,DampCor=DampCor)
+                             ThirdOrderFull = ThirdOrderFull, HubDeriv=HubDeriv,DampCor=DampCor,
+                             Spin = Spin, InitSpin = InitSpin, SpinConstants = SpinConstants,
+                             CustomHubbard = CustomHubbard, UnpairedElectrons = UnpairedElectrons,
+                             )
         
         
         if self.dic is None:
@@ -568,25 +573,44 @@ class SiP:
         os.chdir(self.dir)
         os.system(command)
         os.chdir('..')
-        
     
     def write_and_run_dftb_in_dir(self, angmom, skip_HS_write = False,
                                   skip_write_charges=False, ThirdOrderFull='No',
-                                  HubDeriv = None, DampCor=None):
+                                  HubDeriv = None, DampCor=None,
+                                  InitSpin = None, SpinConstants = None,
+                                  CustomHubbard = None, UnpairedElectrons = 0.0, 
+                                  ):
         ###SCC RUN
+        spin_inp = None
+        if self.spin_pol in ["polarized", "polarised"]:
+            spin_inp = "polarized"
+        
         self.dftb_hsd(angmom_dic = angmom, 
                       ThirdOrderFull=ThirdOrderFull, 
                       HubDeriv=HubDeriv,
-                      DampCor=DampCor
+                      DampCor=DampCor,
+                      Spin = spin_inp,
+                      InitSpin = InitSpin, 
+                      SpinConstants = SpinConstants,
+                      CustomHubbard = CustomHubbard,
+                      UnpairedElectrons = UnpairedElectrons,
                       )
         self.run_dftb_in_dir(angmom)
+        os.system("cp "+self.dir + "/charges.dat "+self.dir+"/charges.orig.dat")
         #if skip_write_charges:
         #    return
+        # assert 1 == 0
         detailed_out = read_mulliken_from_detailedout(self.dir+'/detailed.out')
         self.dftb_mullikencharge_interface()
-        Q0 = detailed_out['pop']
-        self.dic['dftb_charge'].set_Q(Q0)
-        self.dic['dftb_charge'].read_Q(label = 'init_Q')
+        
+        if self.spin_pol in ["polarized", "polarised"]:
+            Q0 = self.dic["dftb_charge"].read_Q_spinpol(label = 'init_Q')
+            self.dic['dftb_charge'].set_Q_spinpol(Q0, dQ_mode = False)
+            self.dic['dftb_charge'].read_Q_spinpol(label = 'init_Q')
+        else:
+            Q0 = detailed_out['pop']
+            self.dic['dftb_charge'].set_Q(Q0)
+            self.dic['dftb_charge'].read_Q(label = 'init_Q')
         
         if skip_HS_write:
             return
@@ -602,14 +626,16 @@ class SiP:
                       SkipChargeTest       = 'Yes',
                       ThirdOrderFull=ThirdOrderFull, 
                       HubDeriv=HubDeriv,
-                      DampCor=DampCor
+                      DampCor=DampCor,
+                      Spin = spin_inp,
+                      InitSpin = None, # No InitSpin here since the spin-polarisation is already in the charges.dat
+                      SpinConstants = SpinConstants,
+                      UnpairedElectrons = UnpairedElectrons,
                       )
-        
         self.run_dftb_in_dir(angmom)
     
-    
-    def read_dftb_hamiltonian(self):
-        H_ele, RH, iH = loadtxt_dftb(self.dir+'/hamreal1.dat')
+    def read_dftb_hamiltonian(self, Hlab = "hamreal1"):
+        H_ele, RH, iH = loadtxt_dftb(self.dir+'/'+Hlab+'.dat')
         S_ele, RS, iS = loadtxt_dftb(self.dir+'/overreal.dat')
         Roff          = self.cell_deviation()
         DR            = Roff[RH[:,0]-1] - Roff[RH[:,1]-1]
@@ -618,15 +644,25 @@ class SiP:
         
         for h in H_ele:
             h*=27.211396641308 # Rydberg to eV
+            if self.spin_pol in ["polarized","polarised"]:
+                h *= 2.0
+        if self.spin_pol in ["polarized","polarised"]:
+           print("Multiplied H by additional factor 2 when there is spin")
         if self.dic is None or 'dftb_equivH' not in self.dic.keys():
             self.dftb_find_equiv(RH,'H')
         if self.dic is None or 'dftb_equivS' not in self.dic.keys():
             self.dftb_find_equiv(RS,'S')
         return H_ele, RH, iH, S_ele, RS, iS
     
-    def dftb2sisl(self, tol = 1e-5, gamma_only = False):
+    def dftb2sisl(self, tol = 1e-5, gamma_only = False, Hlab = "hamreal1", force_read = False):
+        if self.spin_pol in ["polarized", "polarised"] and force_read==False:
+            H1 = self.dftb2sisl(tol =tol, gamma_only=gamma_only, Hlab="hamreal1", force_read =True)
+            H2 = self.dftb2sisl(tol =tol, gamma_only=gamma_only, Hlab="hamreal2", force_read =True)
+            Ht = H1.fromsp(H1.geometry, [H1,H2], S=H1.S)
+            return Ht
+        
         # Read
-        H_ele, RH, iH, S_ele, RS, iS = self.read_dftb_hamiltonian()
+        H_ele, RH, iH, S_ele, RS, iS = self.read_dftb_hamiltonian(Hlab = Hlab)
         # Make dummy orbitals
         if len(iH.shape)==1:
             iH = iH[None,:]
@@ -670,6 +706,8 @@ class SiP:
         hk = constructHk(k, H_ele, RH, iH, eq)
         if 'hamreal' in label:
             hk*=27.21139664130
+        if self.spin_pol in ["polarized", "polarised"]:
+            hk*=2.0
         return hk
     
     def dftb_find_equiv(self, R,label):
@@ -2090,9 +2128,11 @@ class SiP:
         if what=='TSDE':
             return sisl.get_sile(self.dir +'/' +self.sl+'.TSDE').read_density_matrix()
         
-            
     
-    def read_TSHS(self, front = None):
+    
+    def read_TSHS(self, front = None, from_RUN=False):
+        if from_RUN:
+            return sisl.get_sile(self.dir+'/RUN.fdf').read_hamiltonian()
         if front is None:
             name = self.sl
         else:
@@ -3348,7 +3388,9 @@ class SiP:
             return MFH_H0
         
     
-    def calculate_hubbard_transport(self, Contour, start = 10):
+    
+    
+    def calculate_hubbard_transport(self, Contour, start = 10, memory_save = False):
         from sisl import RecursiveSI
         from funcs import get_btd_partition_of_matrix
         from scipy.sparse import csr_matrix
@@ -3370,7 +3412,7 @@ class SiP:
             #else:
             SEs += [RecursiveSI(e.read_TSHS(e.sl), 
                                 translate(e.semi_inf))]
-        
+        print("Calculating self-energies")
         eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
                    for se in SEs]
         eSEs_s1 = [np.array([se.self_energy(e,spin=1) for e in Contour])
@@ -3383,11 +3425,15 @@ class SiP:
         for i,e in enumerate(self.elecs):
             se_inds = []
             for j in self.elec_inds[i]:
-                Is = Hd.a2o(j)
-                if isinstance(Is,np.int64): se_inds += [Is]
+                Is = Hd.a2o(j,all=True)
+                # print(type(Is))
+                if isinstance(Is,np.ndarray): se_inds += [Is]
                 if isinstance(Is,list):     se_inds += Is
+                #if isinstance(Is)
+            se_inds = np.hstack(se_inds)
             SE_inds += [se_inds]
-        nonzeros = Hd.Hk()
+        print(SE_inds[0])
+        nonzeros =  abs(Hd.Sk())+ abs(Hd.Hk())
         for inds in SE_inds:
             ones = csr_matrix((Hd.no, Hd.no))
             ones[np.array(inds)[:,None],np.array(inds)[None,:]] = 1
@@ -3399,74 +3445,314 @@ class SiP:
             kw_dict.update({'SE_'+str(i):eSEs[i]})
             kw_dict.update({'inds_'+str(i):SE_inds[i]})
         
-        np.savez(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
-                 **kw_dict,
-                 Contour = Contour,
-                 Mode2=1
-                 )
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
+                            **kw_dict,
+                            Contour = Contour,
+                            Mode2=1
+                            )
         
         H = np.vstack([Hd.Hk(spin=0).toarray()[None,:,:],
                        Hd.Hk(spin=1).toarray()[None,:,:]
                       ])
+        try:
+            S = np.vstack([Hd.Sk(spin=0).toarray()[None,:,:],
+                           Hd.Sk(spin=1).toarray()[None,:,:]
+                           ])
+        except:
+            S = np.vstack([Hd.Sk().toarray()[None,:,:],
+                           Hd.Sk().toarray()[None,:,:],
+                          ])
+            
         
-        S = np.vstack([Hd.Sk(spin=0).toarray()[None,:,:],
-                       Hd.Sk(spin=1).toarray()[None,:,:]
-                      ])
         kv = np.array([[0,0          , 0],
                        [0,0.123456789, 0]])
         
-        np.savez(self.dir + '/' +self.sl+'.fakeTSHS.npz',
-                 H = H,
-                 S = S,
-                 k = kv)
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTSHS.npz',
+                            H = H,
+                            S = S,
+                            k = kv)
         
         #replace the real file with the fake
         os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
+        print("Calculating spin-resolved transmission")
+        if memory_save:
+            ne = Contour.shape[0]
+            na = len(SEs)
+            Tij0 = np.zeros((ne, na, na), dtype=complex)
+            Tij1 = np.zeros((ne, na, na), dtype=complex)
+            Gami0 = np.zeros(S[0].shape,dtype=complex)
+            Gamj0 = np.zeros(S[0].shape,dtype=complex)
+            Gami1 = np.zeros(S[0].shape,dtype=complex)
+            Gamj1 = np.zeros(S[0].shape,dtype=complex)
+            for ie in range(ne):
+                print("Prog: " +str(np.round(ie*100/ne, 4)))
+                E = Contour[ie]
+                for i in range(na):
+                    idxi = np.array(SE_inds[i])
+                    Gami0[idxi[:, None], idxi[None,:]] = 1j * (eSEs_s0[i][ie] - eSEs_s0[i][ie].conj().T)
+                    Gami1[idxi[:, None], idxi[None,:]] = 1j * (eSEs_s1[i][ie] - eSEs_s1[i][ie].conj().T)
+                    for j in range(na):
+                        idxj = np.array(SE_inds[j])
+                        Gamj0[idxj[:, None], idxj[None,:]] = 1j * (eSEs_s0[j][ie] - eSEs_s0[j][ie].conj().T)
+                        Gamj1[idxj[:, None], idxj[None,:]] = 1j * (eSEs_s1[j][ie] - eSEs_s1[j][ie].conj().T)
+                        G0 = S[0]*E - Hd.Hk(spin = 0).toarray()
+                        G1 = S[1]*E - Hd.Hk(spin = 1).toarray()
+                        for g in range(na):
+                            idx = np.array(SE_inds[g])
+                            G0[idx[:, None], idx[None,:]] -= eSEs_s0[g][ie]
+                            G1[idx[:, None], idx[None,:]] -= eSEs_s1[g][ie]
+                        G0 = np.linalg.inv(G0)
+                        G1 = np.linalg.inv(G1)
+                        M1 = Gami0[:, idxi] @ G0[idxi]
+                        M2 = Gamj0[:, idxj] @ (G0.conj().T)[idxj]
+                        M1 *= M2.T
+                        Tij0[ie, i, j] = np.sum(M1)
+                        M1 = Gami1[:, idxi] @ G1[idxi]
+                        M2 = Gamj1[:, idxj] @ (G1.conj().T)[idxj]
+                        M1 *= M2.T
+                        Tij1[ie, i, j] = np.sum(M1)
+            transmission = Tij0[:, 0, 1] + Tij1[:, 0, 1]
+        else:
+            G0 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 0).toarray()
+            G1 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 1).toarray()
+            SEf0 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
+            SEf1 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
+            for i in range(len(SEs)):
+                idx = np.array(SE_inds[i])
+                #print(eSEs_s0[i].shape,SEf0[i,:, idx[:,None], idx[None,:]].shape)
+                SEf0[i][:, idx[:,None], idx[None,:]] = eSEs_s0[i]
+                SEf1[i][:, idx[:,None], idx[None,:]] = eSEs_s1[i]
+            G0 -= SEf0.sum(axis=0)
+            G1 -= SEf1.sum(axis=0)
+            G0 = np.linalg.inv(G0)
+            G1 = np.linalg.inv(G1)
+            Tij0 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
+            Tij1 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
+            
+            for i in range(len(SEs)):
+                Gam0i = 1j * (SEf0[i] - SEf0[i].conj().transpose(0,2,1) )
+                Gam1i = 1j * (SEf1[i] - SEf1[i].conj().transpose(0,2,1) )
+                for j in range(i+1,len(SEs)):
+                    Gam0j       = 1j * (SEf0[j] - SEf0[j].conj().transpose(0,2,1) )
+                    Gam1j       = 1j * (SEf1[j] - SEf1[j].conj().transpose(0,2,1) )
+                    Tij0[:,i,j] = np.trace(Gam0i@G0@Gam0j@(G0.conj().transpose(0,2,1)), axis1=1,axis2=2)
+                    Tij1[:,i,j] = np.trace(Gam1i@G1@Gam1j@(G1.conj().transpose(0,2,1)), axis1=1,axis2=2)
+            transmission = Tij0[:,0,1]+Tij1[:,0,1]
         
-        G0 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 0).toarray()
-        G1 = np.eye(Hd.no)[None,:,:] * Contour[:,None,None] - Hd.Hk(spin = 1).toarray()
-        SEf0 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
-        SEf1 = np.zeros((len(SEs),len(Contour),)+Hd.Hk().shape, dtype=complex)
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.npz',
+                             transmission = transmission,
+                             real_pivot   = piv,
+                             real_btd     = btd,
+                             pivot        = piv,
+                             btd          = btd,
+                             E            = Contour.real,
+                             _tbtTk_full  = np.array([Tij0[:,0,1], 
+                                                      Tij1[:,0,1]]),
+                             kv           = kv,
+                             wkpt         = [1, 1],
+                             E_F          = 0.0,
+                             geom_xyz     = self.pos_real_space,
+                             geom_cell    = self.lat, 
+                             geom_atoms   = self.s,
+                             geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)])
+                             )
+    
+    def mimic_tbtrans_spin(self, Contour, start = 10, memory_save = False, hoptol = 1e-8):
+        from sisl import RecursiveSI
+        from funcs import get_btd_partition_of_matrix
+        from scipy.sparse import csr_matrix
+        import matplotlib.pyplot as plt
+        
+        SEs = []
+        def translate(dr):
+            if '-a1' in e.semi_inf: return '-A'
+            if '+a1' in e.semi_inf: return '+A'
+            if '-a2' in e.semi_inf: return '-B'
+            if '+a2' in e.semi_inf: return '+B'
+            if '-a3' in e.semi_inf: return '-C'
+            if '+a3' in e.semi_inf: return '+C'
+            
+        for e in self.elecs:
+            #if hasattr(e, 'Hubbard_electrode'):
+            #    SEs += [RecursiveSI(e.read_TSHS('Hubbard_'+e.sl), 
+            #                        translate(e.semi_inf)) ]
+            #else:
+            SEs += [RecursiveSI(e.read_TSHS(e.sl), 
+                                translate(e.semi_inf))]
+        print("Calculating self-energies")
+        eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
+                   for se in SEs]
+        eSEs_s1 = [np.array([se.self_energy(e,spin=1) for e in Contour])
+                   for se in SEs]
+        eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
+                   for i in  range(len(SEs))]
+        try:
+            Hd     = self.read_TSHS()
+        except:
+            os.system("cp "+self.dir+ "/siesta.hiddenTSHS "+self.dir+ "/siesta.TSHS ")
+            Hd     = self.read_TSHS()
+        nonzeros=  abs(Hd.Sk())+ abs(Hd.Hk())
+        borbs   =  Hd.a2o(self.buffer_atoms, all=True)
+        eorbs   = [Hd.a2o(self.elec_inds[i], all=True) for i in range(len(self.elec_inds))]
+        delorb  = np.hstack([borbs ] + eorbs)
+        dorbs   = np.array([i for i in range(Hd.no) if i not in delorb])
+        print("buffer: ")
+        print(borbs)
+        print("elecs: ")
+        print(eorbs)
+        print("device: ")
+        print(dorbs)
+        e2d = [np.where((nonzeros[eorbs[a]].toarray()>hoptol).any(axis=0))[0] for a in range(len(self.elec_inds))]
+        e2d = [np.array([i for i in a if i in dorbs]) for a in e2d]
+        Se2d  = [Hd.Sk()[eorbs[i]][:, e2d[i]]       for i in range(len(self.elec_inds))]
+        V0e2d = [Hd.Hk(spin=0)[eorbs[i]][:, e2d[i]] for i in range(len(self.elec_inds))]
+        V1e2d = [Hd.Hk(spin=1)[eorbs[i]][:, e2d[i]] for i in range(len(self.elec_inds))]
+        print("Converting")
+        def gfe(e, se, spin):
+            return np.linalg.inv((se.spgeom0.Sk()*e 
+                                  - se.spgeom0.Hk(spin=spin)).toarray() 
+                                  - se.self_energy(e, spin=spin))
+        
+        eSEs_s0 = [np.array([(Se2d[i].conj().T*e.conj()-V0e2d[i].conj().T) @  gfe(e, se, 0) @ (Se2d[i]*e - V0e2d[i]) 
+                             for e in Contour] )
+                   for i,se in enumerate(SEs)]
+        eSEs_s1 = [np.array([(Se2d[i].conj().T*e.conj()-V1e2d[i].conj().T) @  gfe(e, se, 1) @ (Se2d[i]*e - V1e2d[i]) 
+                             for e in Contour] )
+                   for i,se in enumerate(SEs)]
+        eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
+                   for i in range(len(SEs))]
+        
+        # convert SEs to 
+        # eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
+        #            for se in SEs]
+        # eSEs_s1 = [np.array([se.self_energy(e,spin=1) for e in Contour])
+        #            for se in SEs]
+        # eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
+        #            for i in  range(len(SEs))]
+        
+        
+        SE_inds = e2d
+        
+        # SE_inds = []
+        # for i,e in enumerate(self.elecs):
+        #     se_inds = []
+        #     for j in self.elec_inds[i]:
+        #         Is = Hd.a2o(j,all=True)
+        #         # print(type(Is))
+        #         if isinstance(Is,np.ndarray): se_inds += [Is]
+        #         if isinstance(Is,list):     se_inds += Is
+        #         #if isinstance(Is)
+        #     se_inds = np.hstack(se_inds)
+        #     SE_inds += [se_inds]
+        
+        for inds in SE_inds:
+            ones = csr_matrix((Hd.no, Hd.no))
+            ones[np.array(inds)[:,None],np.array(inds)[None,:]] = 1
+            nonzeros+=ones
+        nonzeros = abs(nonzeros)
+        piv,btd,part = _BTDP(nonzeros[dorbs][:, dorbs], start)
+        piv = dorbs[piv]
+        
+        kw_dict   = {}
         for i in range(len(SEs)):
-            idx = np.array(SE_inds[i])
-            #print(eSEs_s0[i].shape,SEf0[i,:, idx[:,None], idx[None,:]].shape)
-            SEf0[i][:, idx[:,None], idx[None,:]] = eSEs_s0[i]
-            SEf1[i][:, idx[:,None], idx[None,:]] = eSEs_s1[i]
-        G0 -= SEf0.sum(axis=0)
-        G1 -= SEf1.sum(axis=0)
-        G0 = np.linalg.inv(G0)
-        G1 = np.linalg.inv(G1)
-        Tij0 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
-        Tij1 = np.zeros((len(Contour), len(SEs), len(SEs)),dtype=complex)
+            kw_dict.update({'SE_'+str(i):eSEs[i]})
+            kw_dict.update({'inds_'+str(i):SE_inds[i]})
         
-        for i in range(len(SEs)):
-            Gam0i = 1j * (SEf0[i] - SEf0[i].conj().transpose(0,2,1) )
-            Gam1i = 1j * (SEf1[i] - SEf1[i].conj().transpose(0,2,1) )
-            for j in range(i+1,len(SEs)):
-                Gam0j       = 1j * (SEf0[j] - SEf0[j].conj().transpose(0,2,1) )
-                Gam1j       = 1j * (SEf1[j] - SEf1[j].conj().transpose(0,2,1) )
-                Tij0[:,i,j] = np.trace(Gam0i@G0@Gam0j@(G0.conj().transpose(0,2,1)), axis1=1,axis2=2)
-                Tij1[:,i,j] = np.trace(Gam1i@G1@Gam1j@(G1.conj().transpose(0,2,1)), axis1=1,axis2=2)
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.SE.npz',
+                            **kw_dict,
+                            Contour = Contour,
+                            Mode2=1
+                            )
         
-        transmission = Tij0[:,0,1]+Tij1[:,0,1]
+        H = np.vstack([Hd.Hk(spin=0).toarray()[None,:,:],
+                       Hd.Hk(spin=1).toarray()[None,:,:]
+                      ])
+        try:
+            S = np.vstack([Hd.Sk(spin=0).toarray()[None,:,:],
+                           Hd.Sk(spin=1).toarray()[None,:,:]
+                           ])
+        except:
+            S = np.vstack([Hd.Sk().toarray()[None,:,:],
+                           Hd.Sk().toarray()[None,:,:],
+                          ])
+            
         
-        np.savez(self.dir + '/' +self.sl+'.fakeTBT.npz',
-                 transmission = transmission,
-                 real_pivot   = piv,
-                 real_btd     = btd,
-                 pivot        = piv,
-                 btd          = btd,
-                 E            = Contour.real,
-                 _tbtTk_full  = np.array([Tij0[:,0,1], 
-                                          Tij1[:,0,1]]),
-                 kv           = kv,
-                 wkpt         = [1, 1],
-                 E_F          = 0.0,
-                 geom_xyz     = self.pos_real_space,
-                 geom_cell    = self.lat, 
-                 geom_atoms   = self.s,
-                 geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)])
-                 )
+        kv = np.array([[0,0          , 0],
+                       [0,0.123456789, 0]])
+        
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTSHS.npz',
+                            H = H,
+                            S = S,
+                            k = kv)
+        
+        #replace the real file with the fake
+        os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
+        print("Calculating spin-resolved transmission")
+        ne = Contour.shape[0]
+        na = len(SEs)
+        Tij0 = np.zeros((ne, na, na), dtype=complex)
+        Tij1 = np.zeros((ne, na, na), dtype=complex)
+        Gami0 = np.zeros(S[0].shape,dtype=complex)
+        Gamj0 = np.zeros(S[0].shape,dtype=complex)
+        Gami1 = np.zeros(S[0].shape,dtype=complex)
+        Gamj1 = np.zeros(S[0].shape,dtype=complex)
+        HdHk0 = Hd.Hk(spin = 0).toarray()
+        HdHk1 = Hd.Hk(spin =1).toarray()
+        for ie in range(ne):
+            if np.mod(ie, 10)==0:
+                print("Prog: " +str(np.round(ie*100/ne, 4)))
+            E = Contour[ie]
+            for i in range(na):
+                idxi = np.array(SE_inds[i])
+                Gami0[:,:] = 0.0
+                Gami1[:,:] = 0.0
+                Gami0[idxi[:, None], idxi[None,:]] = 1j * (eSEs_s0[i][ie] - eSEs_s0[i][ie].conj().T)
+                Gami1[idxi[:, None], idxi[None,:]] = 1j * (eSEs_s1[i][ie] - eSEs_s1[i][ie].conj().T)
+                for j in range(na):
+                    idxj = np.array(SE_inds[j])
+                    Gamj0[:,:] = 0.0
+                    Gamj1[:,:] = 0.0
+                    Gamj0[idxj[:, None], idxj[None,:]] = 1j * (eSEs_s0[j][ie] - eSEs_s0[j][ie].conj().T)
+                    Gamj1[idxj[:, None], idxj[None,:]] = 1j * (eSEs_s1[j][ie] - eSEs_s1[j][ie].conj().T)
+                    G0 = S[0]*E - HdHk0
+                    G1 = S[1]*E - HdHk1
+                    for g in range(na):
+                        idx = SE_inds[g]
+                        G0[idx[:, None], idx[None,:]] -= eSEs_s0[g][ie]
+                        G1[idx[:, None], idx[None,:]] -= eSEs_s1[g][ie]
+                    G0 = G0[dorbs][:,dorbs]
+                    G1 = G1[dorbs][:,dorbs]
+                    G0 = np.linalg.inv(G0)
+                    G1 = np.linalg.inv(G1)
+                    M1 = Gami0[dorbs][:,dorbs] @  G0
+                    M2 = Gamj0[dorbs][:,dorbs] @ (G0.conj().T)
+                    M1 *= M2.T
+                    Tij0[ie, i, j] = np.sum(M1)
+                    M1 = Gami1[dorbs][:,dorbs] @ G1
+                    M2 = Gamj1[dorbs][:,dorbs] @ (G1.conj().T)
+                    M1 *= M2.T
+                    Tij1[ie, i, j] = np.sum(M1)
+        transmission = Tij0[:, 0, 1] + Tij1[:, 0, 1]
+
+        
+        np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.npz',
+                             transmission = transmission,
+                             real_pivot   = piv,
+                             real_btd     = btd,
+                             pivot        = piv,
+                             btd          = btd,
+                             E            = Contour.real,
+                             _tbtTk_full  = np.array([Tij0[:,0,1], 
+                                                      Tij1[:,0,1]]),
+                             kv           = kv,
+                             wkpt         = [1, 1],
+                             E_F          = 0.0,
+                             geom_xyz     = self.pos_real_space,
+                             geom_cell    = self.lat, 
+                             geom_atoms   = self.s,
+                             geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)])
+                             )
+    
         
         
     def is_RSSE(self):
@@ -4263,6 +4549,64 @@ class dftb_charge:
         for l in li:
             f.write(l)
         f.close()
+    def set_Q_spinpol(self, Qv, idx = None, dQ_mode = False):
+        fact = 1.0
+        Qtot  = Qv.sum()
+        f     = open(self.file,'r')
+        li    = f.readlines()
+        f.close()
+        if idx is None:
+            idx = self.iaio2i
+        shift = 2
+        count = 0
+        # Get number of atoms from file
+        infoline = li[1].split(" ")
+        infoline = [v for v in infoline if len(v)>0]
+        na = int(infoline[5])
+        # print(Qv)
+        if dQ_mode:
+            Q1 = Qv[0] + Qv[1] * fact
+            Q2 = Qv[0] - Qv[1] * fact
+        else:
+            Q1 = Qv[0]
+            Q2 = Qv[1]
+        line  = ''+li[1]
+        split = line.split()
+        split[-2] = '  '+str(Q1.sum())
+        split[-1] = '  '+str(Q2.sum())+'\n'
+        li[1] ='  '.join(split)
+        
+        for io in range(Qv.shape[1]):
+            ia,lo = np.where(idx == io)
+            ia    = ia[0]; lo = lo[0]
+            q     = Q1[io]
+            #if q<0.0 or np.isnan(q):
+            #    continue
+            if np.isnan(q):
+                continue
+            line  = '' + li[ia + shift]
+            split = line.split()
+            split[lo] = str(q)[0:15]
+            li[ia + shift] = ' '.join(split) + '\n'
+            count += 1
+        for io in range(Qv.shape[1]):
+            ia,lo = np.where(idx == io)
+            ia    = ia[0]; lo = lo[0]
+            q     = Q2[io]
+            #if q<0.0 or np.isnan(q):
+            #    continue
+            if np.isnan(q):
+                continue
+            line  = '' + li[ia + shift + na]
+            split = line.split()
+            split[lo] = str(q)[0:15]
+            li[ia + shift + na] = ' '.join(split) + '\n'
+        
+        f = open(self.file,'w')
+        for l in li:
+            f.write(l)
+        f.close()
+    
     def read_Q(self, idx=None, label = None):
         if idx is None:
             idx = self.iaio2i
@@ -4275,6 +4619,24 @@ class dftb_charge:
         if label is not None:
             self.dic.update({label:Qv})
         return Qv
+    def read_Q_spinpol(self, idx=None, label = None):
+        if idx is None:
+            idx = self.iaio2i
+        li    = open(self.file,'r').readlines()
+        Qv    = np.zeros((2,idx.max()+1))
+        n_lines = (len(li) - 3)//2
+        for ia, line in enumerate(li[2:-1][:n_lines]):
+            split = line.split()
+            Qs    = [float(split[i]) for i in range(len(split))]
+            Qv[0, idx[ia, 0:len(Qs)]] = Qs
+        for ia, line in enumerate(li[2:-1][n_lines:2*n_lines]):
+            split = line.split()
+            Qs    = [float(split[i]) for i in range(len(split))]
+            Qv[1, idx[ia, 0:len(Qs)]] = Qs
+        if label is not None:
+            self.dic.update({label:Qv})
+        return Qv
+    
     
             
             

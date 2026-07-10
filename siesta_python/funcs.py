@@ -1508,7 +1508,10 @@ def get_twist(geom,s1,s2):
 def write_dftb_hsd(object, Scc = 'Yes', write_cell = True, angmom_dic = {},
                    ReadInitialCharges = 'No', WriteChargesAsText = 'No', ReadChargesAsText = 'No',
                    WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
-                   ThirdOrderFull = 'No', HubDeriv=None,DampCor=None):
+                   ThirdOrderFull = 'No', HubDeriv=None,DampCor=None, 
+                   Spin = None, InitSpin = None, SpinConstants = None,
+                   CustomHubbard = None, UnpairedElectrons=0.0,
+                   ):
     
     ua = unique_list(object.s)
     na = str(len(object.s))
@@ -1578,7 +1581,26 @@ def write_dftb_hsd(object, Scc = 'Yes', write_cell = True, angmom_dic = {},
                 HubBlock += 2*s + k + ' = ' + HubDeriv[k] + '\n'
             HubBlock += s+'}\n'
             HamBlock += HubBlock
-        HamBlock += '}'
+        if Spin is not None:
+            # HamBlock += "ShellResolvedSpin = Yes\n"
+            HamBlock += "ShellResolvedSCC = Yes\n"
+            HamBlock += "SpinPolarization = Colinear{\n"
+            if InitSpin is not None:
+                HamBlock += "   InitialSpins = {\n"
+                HamBlock += "".join([v + "\n" for v in InitSpin])
+                HamBlock += "                  }\n"
+            HamBlock += "UnpairedElectrons = "+str(UnpairedElectrons)+"\n"
+            HamBlock += "}\n"
+            if SpinConstants is not None:
+                HamBlock += "SpinConstants = {\n"
+                HamBlock += "".join([v+"\n" for v in SpinConstants])
+                HamBlock += "         }\n"
+            if CustomHubbard is not None:
+                HamBlock += "\n"
+                HamBlock += "CustomisedHubbards = {\n"
+                HamBlock += " ".join([v+"\n" for v in CustomHubbard])
+                HamBlock += "         }\n"
+        HamBlock += "}\n"
         
         OptBlock  = '\n\nOptions{\n'
         if WriteRealHS != 'No':
