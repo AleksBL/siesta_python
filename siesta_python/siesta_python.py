@@ -14,7 +14,10 @@ from funcs import read_gulp_results, read_total_energy, read_fermi_level, write_
 from funcs import get_btd_partition_of_matrix as _BTDP
 from funcs import write_mpr, write_dftb_hsd
 from funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
-from dftbplus_interface import construct_sparse, read_mulliken_from_detailedout, constructHk
+from dftbplus_interface import (construct_sparse, 
+                                read_mulliken_from_detailedout,
+                                read_mulliken_from_detailedout_spinpol, 
+                                constructHk)
 from dftbplus_interface import has_equiv_in_l as equiv_dftb
 from dftbplus_interface import loadtxt as loadtxt_dftb
 from config import GfModule_extension
@@ -600,14 +603,20 @@ class SiP:
         #if skip_write_charges:
         #    return
         # assert 1 == 0
-        detailed_out = read_mulliken_from_detailedout(self.dir+'/detailed.out')
-        self.dftb_mullikencharge_interface()
         
         if self.spin_pol in ["polarized", "polarised"]:
-            Q0 = self.dic["dftb_charge"].read_Q_spinpol(label = 'init_Q')
+            detailed_out_up = read_mulliken_from_detailedout_spinpol(self.dir+'/detailed.out', "up")
+            detailed_out_dn = read_mulliken_from_detailedout_spinpol(self.dir+'/detailed.out', "down")
+            self.dftb_mullikencharge_interface()
+            Q01 = detailed_out_up["pop"] + detailed_out_dn["pop"]
+            Q02 = detailed_out_up["pop"] - detailed_out_dn["pop"]
+            Q0  = np.vstack([Q01, Q02])
             self.dic['dftb_charge'].set_Q_spinpol(Q0, dQ_mode = False)
             self.dic['dftb_charge'].read_Q_spinpol(label = 'init_Q')
         else:
+            detailed_out = read_mulliken_from_detailedout(self.dir+'/detailed.out')
+            self.dftb_mullikencharge_interface()
+            
             Q0 = detailed_out['pop']
             self.dic['dftb_charge'].set_Q(Q0)
             self.dic['dftb_charge'].read_Q(label = 'init_Q')
@@ -723,10 +732,12 @@ class SiP:
         angmom = self.dic['dftb_angmom']
         norb   = np.array([angmom2norb[angmom[Num2Sym[si]]] for si in self.s])
         Charge = dftb_charge(self.dir+'/charges.dat', self.s, norb)
+        Charge.dic.update({"angmom":angmom})
         if self.dic is None:
             self.dic = {'dftb_charge': Charge}
         else:
             self.dic.update({'dftb_charge': Charge})
+        
     
     def get_pseudo_paths(self, manual = [], labs = None):
         paths=[]
@@ -4503,11 +4514,12 @@ class sisl_replica_for_projection:
 
 class dftb_charge:
     def __init__(self, file, atoms, norbs):
-        self.file = file
+        self.file  = file
         self.norbs = norbs
         self.atoms = atoms
         self.createa2o()
         self.dic = {}
+        self.format2sp()
     def a2o(self,ia,lo):
         orbs = self.norbs[:ia].sum()
         return orbs + lo
@@ -4549,12 +4561,46 @@ class dftb_charge:
         for l in li:
             f.write(l)
         f.close()
+    def format2sp(self):
+        ns     = len(self.atoms)
+        AtOrbs = []
+        MapTo  = []
+        MapS   = np.array([0])
+        MapP   = np.array([0, 1, 1, 1])
+        MapD   = np.array([0, 1, 1, 1, 4, 4, 4, 4, 4])
+        it     = 0
+        for i in range(ns):
+            no      = self.norbs[i]
+            AtOrbs += [np.arange(it, it + no)]
+            if   no == 1:
+                MapTo += [MapS.copy() + it]
+            elif no == 4:
+                MapTo += [MapP.copy() + it]
+            elif no == 9:
+                MapTo += [MapD.copy() + it]
+            it += no
+        AtOrbs = np.hstack(AtOrbs)
+        MapTo  = np.hstack(MapTo)
+        self.AtOrbs = AtOrbs
+        self.MapTo  = MapTo
+    #def formatq(self, q, piv):
+    #    mapto = 
+        
+    
+        
+        
+    
     def set_Q_spinpol(self, Qv, idx = None, dQ_mode = False):
-        fact = 1.0
-        Qtot  = Qv.sum()
-        f     = open(self.file,'r')
-        li    = f.readlines()
-        f.close()
+        fact  = 1.0
+        if dQ_mode:
+            Q1 = (Qv[0] + Qv[1]) * fact
+            Q2 = (Qv[0] - Qv[1]) * fact
+        else:
+            Q1 = Qv[0]
+            Q2 = Qv[1]
+        with open(self.file,'r') as f:
+            li = f.readlines()
+
         if idx is None:
             idx = self.iaio2i
         shift = 2
@@ -4564,17 +4610,11 @@ class dftb_charge:
         infoline = [v for v in infoline if len(v)>0]
         na = int(infoline[5])
         # print(Qv)
-        if dQ_mode:
-            Q1 = Qv[0] + Qv[1] * fact
-            Q2 = Qv[0] - Qv[1] * fact
-        else:
-            Q1 = Qv[0]
-            Q2 = Qv[1]
         line  = ''+li[1]
         split = line.split()
         split[-2] = '  '+str(Q1.sum())
         split[-1] = '  '+str(Q2.sum())+'\n'
-        li[1] ='  '.join(split)
+        li[1]     = '  '.join(split)
         
         for io in range(Qv.shape[1]):
             ia,lo = np.where(idx == io)
@@ -4583,6 +4623,7 @@ class dftb_charge:
             #if q<0.0 or np.isnan(q):
             #    continue
             if np.isnan(q):
+                print("Q element was nan, this is not good")
                 continue
             line  = '' + li[ia + shift]
             split = line.split()
@@ -4596,16 +4637,17 @@ class dftb_charge:
             #if q<0.0 or np.isnan(q):
             #    continue
             if np.isnan(q):
+                print("Q element was nan, this is not good")
                 continue
             line  = '' + li[ia + shift + na]
             split = line.split()
             split[lo] = str(q)[0:15]
             li[ia + shift + na] = ' '.join(split) + '\n'
         
-        f = open(self.file,'w')
-        for l in li:
-            f.write(l)
-        f.close()
+        with open(self.file, 'w') as f:
+            for l in li:
+                f.write(l)
+        #
     
     def read_Q(self, idx=None, label = None):
         if idx is None:

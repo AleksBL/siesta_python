@@ -214,6 +214,49 @@ def read_mulliken_from_detailedout(file):
            'label':label}
     return res
 
+def read_mulliken_from_detailedout_spinpol(file, which):
+    lines = open(file,'r').readlines()
+    s   = []
+    Sh  = []
+    L   = []
+    m   = []
+    Pop = []
+    label=[]
+    read = False
+    if which =="up":
+        trig = "Orbital populations (up)"
+    elif which=="down":        
+        trig = "Orbital populations (down)"
+    else:
+        assert 1 == 0, "didnt recognize the which keyword"
+    
+    
+    for i,l in enumerate(lines):
+        if trig in lines[i-2] and "Atom" in lines[i-1] and "Sh." in lines[i-1]:
+            read = True
+        if len(l)==1:
+            read = False
+        if read:
+            spl = l.replace('\n','').split()
+            s. append(int(spl[0]))
+            Sh.append(int(spl[1]))
+            L. append(int(spl[2]))
+            m. append(int(spl[3]))
+            Pop.append(float(spl[4]))
+            label.append(spl[5])
+    s = np.array(s).astype(int)
+    Sh= np.array(Sh).astype(int)
+    L = np.array(L).astype(int)
+    m = np.array(m).astype(int)
+    Pop = np.array(Pop)
+    res = {'s':s,
+           'Shell':Sh,
+           'l':L,
+           'm':m,
+           'pop':Pop,
+           'label':label}
+    return res
+
 # for i in range(10):
 #     H_ele, R, inf = loadtxt('/home/aleksander/Desktop/Calculations/CLEAN_TD/dftb_rib/Dev/hamreal1.dat')
 # #     #eq =  has_equiv_in_l(R)
