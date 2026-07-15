@@ -715,7 +715,7 @@ class SiP:
         hk = constructHk(k, H_ele, RH, iH, eq)
         if 'hamreal' in label:
             hk*=27.21139664130
-        if self.spin_pol in ["polarized", "polarised"]:
+        if self.spin_pol in ["polarized", "polarised"] and "overreal" not in label:
             hk*=2.0
         return hk
     
@@ -3703,6 +3703,9 @@ class SiP:
         na = len(SEs)
         Tij0 = np.zeros((ne, na, na), dtype=complex)
         Tij1 = np.zeros((ne, na, na), dtype=complex)
+        DOS0 = np.zeros((ne, na, na), dtype=complex)
+        DOS1 = np.zeros((ne, na, na), dtype=complex)
+        
         Gami0 = np.zeros(S[0].shape,dtype=complex)
         Gamj0 = np.zeros(S[0].shape,dtype=complex)
         Gami1 = np.zeros(S[0].shape,dtype=complex)
@@ -3739,6 +3742,8 @@ class SiP:
                     M2 = Gamj0[dorbs][:,dorbs] @ (G0.conj().T)
                     M1 *= M2.T
                     Tij0[ie, i, j] = np.sum(M1)
+                    DOS0[ie] = np.sum(1j*S[0][dorbs][:,dorbs]*(G0 - G0.conj().T))
+                    DOS1[ie] = np.sum(1j*S[1][dorbs][:,dorbs]*(G1 - G1.conj().T))
                     M1 = Gami1[dorbs][:,dorbs] @ G1
                     M2 = Gamj1[dorbs][:,dorbs] @ (G1.conj().T)
                     M1 *= M2.T
@@ -3753,18 +3758,16 @@ class SiP:
                              pivot        = piv,
                              btd          = btd,
                              E            = Contour.real,
-                             _tbtTk_full  = np.array([Tij0[:,0,1], 
-                                                      Tij1[:,0,1]]),
+                             _tbtTk_full  = np.array([Tij0[:,0,1], Tij1[:,0,1]]),
                              kv           = kv,
                              wkpt         = [1, 1],
                              E_F          = 0.0,
                              geom_xyz     = self.pos_real_space,
-                             geom_cell    = self.lat, 
+                             geom_cell    = self.lat,
                              geom_atoms   = self.s,
-                             geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)])
+                             geom_a2o     = np.array([Hd.a2o(i) for i in range(Hd.na+1)]),
+                             DOS0=DOS0,     DOS1=DOS1,
                              )
-    
-        
         
     def is_RSSE(self):
         if self.elec_2E_RSSE:
