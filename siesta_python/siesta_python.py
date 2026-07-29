@@ -616,7 +616,6 @@ class SiP:
         else:
             detailed_out = read_mulliken_from_detailedout(self.dir+'/detailed.out')
             self.dftb_mullikencharge_interface()
-            
             Q0 = detailed_out['pop']
             self.dic['dftb_charge'].set_Q(Q0)
             self.dic['dftb_charge'].read_Q(label = 'init_Q')
@@ -894,7 +893,7 @@ class SiP:
         self.pos_real_space = self.pos_real_space[idx]
         self._rearange_indices = idx
         
-        print(inds)
+        print([[int(i) for i in ie] for ie in inds])
         if correct_electrode_types == True:
             it=0
             for e in self.elecs:
@@ -3620,7 +3619,7 @@ class SiP:
         V1e2d = [Hd.Hk(spin=1)[eorbs[i]][:, e2d[i]] for i in range(len(self.elec_inds))]
         print("Converting")
         def gfe(e, se, spin):
-            return np.linalg.inv((se.spgeom0.Sk()*e 
+            return np.linalg.inv((  se.spgeom0.Sk()*e 
                                   - se.spgeom0.Hk(spin=spin)).toarray() 
                                   - se.self_energy(e, spin=spin))
         
@@ -3662,6 +3661,9 @@ class SiP:
             nonzeros+=ones
         nonzeros = abs(nonzeros)
         piv,btd,part = _BTDP(nonzeros[dorbs][:, dorbs], start)
+        btd = np.array([int(k) for k in btd])
+        #_piv_orig  = piv.copy()
+        #_ipiv_orig = np.array([np.where(piv == i)[0][0] for i in range(piv.shape[0])])
         piv = dorbs[piv]
         
         kw_dict   = {}
@@ -3703,8 +3705,8 @@ class SiP:
         na = len(SEs)
         Tij0 = np.zeros((ne, na, na), dtype=complex)
         Tij1 = np.zeros((ne, na, na), dtype=complex)
-        DOS0 = np.zeros((ne, na, na), dtype=complex)
-        DOS1 = np.zeros((ne, na, na), dtype=complex)
+        DOS0 = np.zeros(ne, dtype=complex)
+        DOS1 = np.zeros(ne, dtype=complex)
         
         Gami0 = np.zeros(S[0].shape,dtype=complex)
         Gamj0 = np.zeros(S[0].shape,dtype=complex)
@@ -3712,6 +3714,8 @@ class SiP:
         Gamj1 = np.zeros(S[0].shape,dtype=complex)
         HdHk0 = Hd.Hk(spin = 0).toarray()
         HdHk1 = Hd.Hk(spin =1).toarray()
+        # from SelfEnergyCalculators.Decimation import BTDinv
+        # print("Block partition: ", btd)
         for ie in range(ne):
             if np.mod(ie, 10)==0:
                 print("Prog: " +str(np.round(ie*100/ne, 4)))
@@ -3738,12 +3742,15 @@ class SiP:
                     G1 = G1[dorbs][:,dorbs]
                     G0 = np.linalg.inv(G0)
                     G1 = np.linalg.inv(G1)
+                    #G0 = BTDinv(G0, _piv_orig, btd, _ipiv_orig)
+                    #G1 = BTDinv(G1, _piv_orig, btd, _ipiv_orig)
+                    
                     M1 = Gami0[dorbs][:,dorbs] @  G0
                     M2 = Gamj0[dorbs][:,dorbs] @ (G0.conj().T)
                     M1 *= M2.T
                     Tij0[ie, i, j] = np.sum(M1)
-                    DOS0[ie] = np.sum(1j*S[0][dorbs][:,dorbs]*(G0 - G0.conj().T))
-                    DOS1[ie] = np.sum(1j*S[1][dorbs][:,dorbs]*(G1 - G1.conj().T))
+                    DOS0[ie] = np.sum(1j*S[0][dorbs][:,dorbs]*(G0 - G0.conj().T))/(2 * np.pi)
+                    DOS1[ie] = np.sum(1j*S[1][dorbs][:,dorbs]*(G1 - G1.conj().T))/(2 * np.pi)
                     M1 = Gami1[dorbs][:,dorbs] @ G1
                     M2 = Gamj1[dorbs][:,dorbs] @ (G1.conj().T)
                     M1 *= M2.T
@@ -4553,8 +4560,9 @@ class dftb_charge:
         for io in range(len(Qv)):
             ia,lo = np.where(idx == io)
             ia    = ia[0]; lo = lo[0]
-            q     = Qv[io]
+            q     = np.round(Qv[io],12)
             if q<0.0 or np.isnan(q):
+                print("Found mullikencharge < 0 or nan...")
                 continue
             line  = '' + li[ia + shift]
             split = line.split()
@@ -4601,6 +4609,9 @@ class dftb_charge:
         else:
             Q1 = Qv[0]
             Q2 = Qv[1]
+        Q1 = np.round(Q1, 12)
+        Q2 = np.round(Q2, 12)
+        
         with open(self.file,'r') as f:
             li = f.readlines()
 
@@ -4657,7 +4668,13 @@ class dftb_charge:
             idx = self.iaio2i
         li    = open(self.file,'r').readlines()
         Qv    = np.zeros(idx.max()+1)
-        for ia, line in enumerate(li[2:-1]):
+        na    = len(self.atoms)
+        ##FIXED THIS BUG FOR DFTB+ < v 25.1
+        ##for ia, line in enumerate(li[2:-1]):
+        ##    split = line.split()
+        ##    Qs    = [float(split[i]) for i in range(len(split))]
+        ##    Qv[idx[ia, 0:len(Qs)]] = Qs
+        for ia, line in enumerate(li[2:2+na]):
             split = line.split()
             Qs    = [float(split[i]) for i in range(len(split))]
             Qv[idx[ia, 0:len(Qs)]] = Qs
@@ -4670,6 +4687,10 @@ class dftb_charge:
         li    = open(self.file,'r').readlines()
         Qv    = np.zeros((2,idx.max()+1))
         n_lines = (len(li) - 3)//2
+        if n_lines != len(self.atoms):
+            print("Something is wrong when reading Q from DFTB charge.dat. The number of lines is not the number of atoms....")
+            print("Please use DFTB+ v25.1, this is the only known working version.")
+            assert 1==0, "Error in siesta_python interface to charge.dat (dftb_charge class)"
         for ia, line in enumerate(li[2:-1][:n_lines]):
             split = line.split()
             Qs    = [float(split[i]) for i in range(len(split))]
@@ -4681,12 +4702,3 @@ class dftb_charge:
         if label is not None:
             self.dic.update({label:Qv})
         return Qv
-    
-    
-            
-            
-        
-        
-    
-    
-    
