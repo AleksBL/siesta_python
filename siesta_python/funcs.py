@@ -1510,7 +1510,7 @@ def write_dftb_hsd(object, Scc = 'Yes', write_cell = True, angmom_dic = {},
                    WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
                    ThirdOrderFull = 'No', HubDeriv=None,DampCor=None, 
                    Spin = None, InitSpin = None, SpinConstants = None,
-                   CustomHubbard = None, UnpairedElectrons=0.0,
+                   CustomHubbard = None, UnpairedElectrons=0.0,PolynomialRepulsive=None,
                    ):
     
     ua = unique_list(object.s)
@@ -1561,6 +1561,8 @@ def write_dftb_hsd(object, Scc = 'Yes', write_cell = True, angmom_dic = {},
             sym  = Num2Sym[ia]
             HamBlock += s+'  '+sym+' = \"'+angmom_dic[sym]+'\"\n'
         HamBlock +=s+'}\n\n'
+        if PolynomialRepulsive is not None:
+            HamBlock += "PolynomialRepulsive = "+PolynomialRepulsive+"\n"
         if object.kp is not None:
             HamBlock +=s+'KPointsAndWeights = SuperCellFolding {\n'
             HamBlock += s + '   '+str(object.kp[0])+' 0 0 \n'

@@ -539,7 +539,8 @@ class SiP:
                        WriteRealHS='No', CalculateForces='No', SkipChargeTest='No',
                        ThirdOrderFull='No', HubDeriv=None,DampCor=None, 
                        Spin=None, InitSpin=None, SpinConstants=None, CustomHubbard = None,
-                       UnpairedElectrons = 0.0):
+                       UnpairedElectrons = 0.0, PolynomialRepulsive=None,
+                       ):
         
         write_dftb_hsd(self, Scc = Scc, write_cell = write_cell, angmom_dic = angmom_dic,
                              ReadInitialCharges = ReadInititialCharges, WriteChargesAsText=WriteChargesAsText,
@@ -548,6 +549,7 @@ class SiP:
                              ThirdOrderFull = ThirdOrderFull, HubDeriv=HubDeriv,DampCor=DampCor,
                              Spin = Spin, InitSpin = InitSpin, SpinConstants = SpinConstants,
                              CustomHubbard = CustomHubbard, UnpairedElectrons = UnpairedElectrons,
+                             PolynomialRepulsive=PolynomialRepulsive, 
                              )
         
         
@@ -582,7 +584,7 @@ class SiP:
                                   HubDeriv = None, DampCor=None,
                                   InitSpin = None, SpinConstants = None,
                                   CustomHubbard = None, UnpairedElectrons = 0.0, 
-                                  ):
+                                  PolynomialRepulsive=None):
         ###SCC RUN
         spin_inp = None
         if self.spin_pol in ["polarized", "polarised"]:
@@ -597,6 +599,7 @@ class SiP:
                       SpinConstants = SpinConstants,
                       CustomHubbard = CustomHubbard,
                       UnpairedElectrons = UnpairedElectrons,
+                      PolynomialRepulsive=PolynomialRepulsive,
                       )
         self.run_dftb_in_dir(angmom)
         os.system("cp "+self.dir + "/charges.dat "+self.dir+"/charges.orig.dat")
@@ -639,6 +642,7 @@ class SiP:
                       InitSpin = None, # No InitSpin here since the spin-polarisation is already in the charges.dat
                       SpinConstants = SpinConstants,
                       UnpairedElectrons = UnpairedElectrons,
+                      PolynomialRepulsive=PolynomialRepulsive,
                       )
         self.run_dftb_in_dir(angmom)
     
@@ -4562,8 +4566,11 @@ class dftb_charge:
             ia    = ia[0]; lo = lo[0]
             q     = np.round(Qv[io],12)
             if q<0.0 or np.isnan(q):
+                print("DFTB_charge.set_Q: ")
                 print("Found mullikencharge < 0 or nan...")
-                continue
+                print("q_"+str(io)+" = "+str(q))
+                print("You should check why this is.....")
+
             line  = '' + li[ia + shift]
             split = line.split()
             split[lo] = str(q)[0:15]

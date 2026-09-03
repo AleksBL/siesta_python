@@ -3,7 +3,7 @@
 Version 1.0
 
 # Introduction
-This is a code meant for easy handling of SIESTA, TranSIESTA and TBtrans calculations. This code allows to call these DFT programs directly in python, thereby allowing for better scripting using these programs. 
+This is a code meant for easy handling of SIESTA, TranSIESTA and TBtrans calculations. This code allows to call these DFT programs directly in python, thereby allowing for better scripting using these programs. It can also write files and run the DFTB+ code.
 
 ## Features 
 - The SiP object allows for automatisation of many tasks, such as writing fdf files, rearranging geometries and finding particular indices to be passed to SIESTA. 
