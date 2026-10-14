@@ -1,19 +1,14 @@
 from scipy.sparse import csr_matrix
-from datetime import datetime
 from subprocess import Popen
 import numpy as np
-import os
-import sys
-import sisl
-import seekpath
+import os, sys, sisl, seekpath
 import spglib as spg
-from time import time
 sys.path.append(__file__[:-16])
 from funcs import unique_list, Num2Sym, read_analyze, write_fdf, write_gin, read_geom_from_fdf
 from funcs import read_gulp_results, read_total_energy, read_fermi_level, write_relax_fdf, read_siesta_relax, Mulliken, Identity
 from funcs import get_btd_partition_of_matrix as _BTDP
 from funcs import write_mpr, write_dftb_hsd
-from funcs import read_contour_from_failed_RSSE_calc, recreate_old_calculation, unique_list, barebones_RUN
+from funcs import read_contour_from_failed_RSSE_calc, barebones_RUN
 from dftbplus_interface import (construct_sparse, 
                                 read_mulliken_from_detailedout,
                                 read_mulliken_from_detailedout_spinpol, 
@@ -309,9 +304,7 @@ class SiP:
         if (np.array(Chem_Pot)!=0.0).any(): NEGF_calc = True
         self.NEGF_calc        = NEGF_calc
         self.reuse_dm         = reuse_dm
-        self.dQ               = None
         self.set_pdos         = set_pdos
-        #self.save_electrostatic_potential = save_es
         self.save_potential_grids=save_potentials
         self.buffer_atoms     = buffer_atoms
         self.Device_atoms     = Device_atoms
@@ -330,6 +323,9 @@ class SiP:
         self.dic              = dictionary
         self.print_mulliken   = print_mulliken
         self.contour_settings = contour_settings
+        # Default hubbard_electrode:
+        self.is_hubbard_electrode = False
+
         
         
         if skip_distance_check == True:
@@ -1148,13 +1144,13 @@ class SiP:
     
     def dQ(self):
         """Read excess charge from transiesta calculation."""
-        dQ=None
+        dq=None
         with open(self.dir+'/'+'RUN.out','r') as f:
             for l in f:
                 if 'Excess charge' in l:
-                    dQ=float(l[37:])
+                    dq=float(l[37:])
                     break
-        self.dQ=dQ
+        return dq
     
     def create_added_stuff_dic(self):
         if hasattr(self,'Added_stuff') == False:
@@ -2055,7 +2051,7 @@ class SiP:
             name = self.sl
         else:
             name = front
-        if self.Hubbard_electrode == 'Yes':
+        if self.is_hubbard_electrode:
             name = 'Hubbard_'+name
         return sisl.get_sile(self.dir+'/'+name+'.TSHS').read_hamiltonian()
     
@@ -2113,30 +2109,6 @@ class SiP:
                 return False
         except:
             return False
-    
-    def set(self, key, val):
-        self.__dict__[key] = val
-    
-    def sleep(self, n):
-        from time import sleep
-        sleep(n)
-    
-    def scream(self, message):
-        with open(self.dir + '/lua_comm/python_scream.txt', 'w') as f:
-            for m in message:
-                f.write(m)
-        
-        
-        with open(self.dir + '/lua_comm/python_scream_history.txt', 'a') as f:
-            f.write('\n --scream at ' + str(datetime.now())+'--\n')
-            
-            for m in message:
-                f.write(m)
-    
-    def hear(self):
-        with open(self.dir + '/lua_comm/siesta_scream.txt', 'w') as f:
-            message = f.readlines()
-        return message
     
     def set_methfessel_paxton(self, N):
         lines = ['OccupationFunction MP\n',
@@ -3100,8 +3072,6 @@ class SiP:
         elif spin == 1:
             return sisl.get_sile(self.dir+'/'+self.sl + '.TBT_DN.nc')
             
-    
-    
     def add_atom(self, pos= None, s = None):
         if isinstance(pos, SiP):
             self.add_atom(pos.pos_real_space, pos.s)
@@ -3187,8 +3157,7 @@ class SiP:
         Eg = sile.E
         kv = sile.k
         
-        #print(SE[0].shape, Eg.shape)
-        Sys = Greens_function(H, Piv, Part, sisl_S = S) 
+        Sys = Greens_function(H, Piv, Part, sisl_S = S)
         Sys.set_SE(self_Es, self_inds)
         Sys.set_eta(0.0)
         Sys.set_ev(Eg)
@@ -3242,45 +3211,44 @@ class SiP:
         
         # 😄🍊🤮 python can do emojis
         
-        np.savez(Dr + '/' +sl+'.fakeTBT.npz',
-                 transmission = sile.transmission(),
-                 real_pivot   = sile.pivot(),
-                 real_btd     = sile.btd(),
-                 pivot        = np.arange(Ns),
-                 btd          = [Ns],
-                 E            = sile.E,
-                 _tbtTk_full  = np.array([sile.transmission(kavg = i) 
-                                          for i in range(len(sile.k))]),
-                 kv           = sile.k,
-                 wkpt         = sile.wkpt,
-                 E_F          = E_F
-                 )
+        np.savez_compressed(Dr + '/' +sl+'.fakeTBT.npz',
+                             transmission = sile.transmission(),
+                             real_pivot   = sile.pivot(),
+                             real_btd     = sile.btd(),
+                             pivot        = np.arange(Ns),
+                             btd          = [Ns],
+                             E            = sile.E,
+                             _tbtTk_full  = np.array([sile.transmission(kavg = i) 
+                                                      for i in range(len(sile.k))]),
+                             kv           = sile.k,
+                             wkpt         = sile.wkpt,
+                             E_F          = E_F
+                             )
         
         if self.custom_tbtrans_contour is not None:
             Cont = self.custom_tbtrans_contour.astype(np.complex128)
         else:
             Cont = sile.E.real
         
-        np.savez(Dr + '/' +sl+'.fakeTBT.SE.npz',
-                 SE   = SE,
-                 inds = np.arange(Ns),
-                 Contour = Cont,
-                 )
+        np.savez_compressed(Dr + '/' +sl+'.fakeTBT.SE.npz',
+                             SE   = SE,
+                             inds = np.arange(Ns),
+                             Contour = Cont,
+                             )
+                    
+        np.savez_compressed(Dr + '/' +sl+'.fakeTSHS.npz',
+                             H = H[:,0,:,:],
+                             S = Sn[:,0,:,:],
+                             k = sile.k)
         
-        np.savez(Dr + '/' +sl+'.fakeTSHS.npz',
-                 H = H[:,0,:,:],
-                 S = Sn[:,0,:,:],
-                 k = sile.k)
-        
-        np.savez(Dr + '/'+sl+'Proj2ortho.npz',
-                 projvec  = v,
-                 Overlap  = S,
-                 Lowdin   =  Blocksparse2Numpy(Lowdin[0],slices),
-                 )
-        
+        np.savez_compressed(Dr + '/'+sl+'Proj2ortho.npz',
+                             projvec  = v,
+                             Overlap  = S,
+                             Lowdin   =  Blocksparse2Numpy(Lowdin[0],slices),
+                             )
         return SiP_proj
     
-    def Hubbard_electrode(self,up0,dn0, SE = False, add_spin = True, 
+    def Hubbard_electrode(self, up0, dn0, SE = False, add_spin = True, 
                           U = 3.0, kT = 0.025, kp = [102,1,1],
                           n0 = None,return_MFH=False):
         from hubbard import HubbardHamiltonian, density
@@ -3298,13 +3266,10 @@ class SiP:
         MFH_H0.H.write(self.dir+'/Hubbard_'+self.sl+'.TSHS')
         np.save(self.dir+'/Density.npy',MFH_H0.n)
         np.save(self.dir+'/Shift.npy', -Ef_elec)
-        self.Hubbard_electrode = 'Yes'
+        self.is_hubbard_electrode = True
         if return_MFH:
             return MFH_H0
-        
-    
-    
-    
+
     def calculate_hubbard_transport(self, Contour, start = 10, memory_save = False):
         from sisl import RecursiveSI
         from funcs import get_btd_partition_of_matrix
@@ -3321,11 +3286,7 @@ class SiP:
             if '+a3' in e.semi_inf: return '+C'
             
         for e in self.elecs:
-            #if hasattr(e, 'Hubbard_electrode'):
-            #    SEs += [RecursiveSI(e.read_TSHS('Hubbard_'+e.sl), 
-            #                        translate(e.semi_inf)) ]
-            #else:
-            SEs += [RecursiveSI(e.read_TSHS(e.sl), 
+            SEs += [RecursiveSI(e.read_TSHS(e.sl),
                                 translate(e.semi_inf))]
         print("Calculating self-energies")
         eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
@@ -3341,10 +3302,8 @@ class SiP:
             se_inds = []
             for j in self.elec_inds[i]:
                 Is = Hd.a2o(j,all=True)
-                # print(type(Is))
                 if isinstance(Is,np.ndarray): se_inds += [Is]
                 if isinstance(Is,list):     se_inds += Is
-                #if isinstance(Is)
             se_inds = np.hstack(se_inds)
             SE_inds += [se_inds]
         print(SE_inds[0])
@@ -3488,11 +3447,7 @@ class SiP:
             if '+a3' in e.semi_inf: return '+C'
             
         for e in self.elecs:
-            #if hasattr(e, 'Hubbard_electrode'):
-            #    SEs += [RecursiveSI(e.read_TSHS('Hubbard_'+e.sl), 
-            #                        translate(e.semi_inf)) ]
-            #else:
-            SEs += [RecursiveSI(e.read_TSHS(e.sl), 
+            SEs += [RecursiveSI(e.read_TSHS(e.sl),
                                 translate(e.semi_inf))]
         print("Calculating self-energies")
         eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
@@ -3537,28 +3492,7 @@ class SiP:
         eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
                    for i in range(len(SEs))]
         
-        # convert SEs to 
-        # eSEs_s0 = [np.array([se.self_energy(e,spin=0) for e in Contour]) 
-        #            for se in SEs]
-        # eSEs_s1 = [np.array([se.self_energy(e,spin=1) for e in Contour])
-        #            for se in SEs]
-        # eSEs    = [np.vstack([eSEs_s0[i][None,:,:,:], eSEs_s1[i][None,:,:,:]])
-        #            for i in  range(len(SEs))]
-        
-        
         SE_inds = e2d
-        
-        # SE_inds = []
-        # for i,e in enumerate(self.elecs):
-        #     se_inds = []
-        #     for j in self.elec_inds[i]:
-        #         Is = Hd.a2o(j,all=True)
-        #         # print(type(Is))
-        #         if isinstance(Is,np.ndarray): se_inds += [Is]
-        #         if isinstance(Is,list):     se_inds += Is
-        #         #if isinstance(Is)
-        #     se_inds = np.hstack(se_inds)
-        #     SE_inds += [se_inds]
         
         for inds in SE_inds:
             ones = csr_matrix((Hd.no, Hd.no))
@@ -3567,8 +3501,6 @@ class SiP:
         nonzeros = abs(nonzeros)
         piv,btd,part = _BTDP(nonzeros[dorbs][:, dorbs], start)
         btd = np.array([int(k) for k in btd])
-        #_piv_orig  = piv.copy()
-        #_ipiv_orig = np.array([np.where(piv == i)[0][0] for i in range(piv.shape[0])])
         piv = dorbs[piv]
         
         kw_dict   = {}
@@ -3593,16 +3525,12 @@ class SiP:
             S = np.vstack([Hd.Sk().toarray()[None,:,:],
                            Hd.Sk().toarray()[None,:,:],
                           ])
-            
-        
         kv = np.array([[0,0          , 0],
                        [0,0.123456789, 0]])
-        
         np.savez_compressed(self.dir + '/' +self.sl+'.fakeTSHS.npz',
                             H = H,
                             S = S,
                             k = kv)
-        
         #replace the real file with the fake
         ossystem('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
         print("Calculating spin-resolved transmission")
@@ -3619,8 +3547,6 @@ class SiP:
         Gamj1 = np.zeros(S[0].shape,dtype=complex)
         HdHk0 = Hd.Hk(spin = 0).toarray()
         HdHk1 = Hd.Hk(spin =1).toarray()
-        # from SelfEnergyCalculators.Decimation import BTDinv
-        # print("Block partition: ", btd)
         for ie in range(ne):
             if np.mod(ie, 10)==0:
                 print("Prog: " +str(np.round(ie*100/ne, 4)))
@@ -3647,8 +3573,6 @@ class SiP:
                     G1 = G1[dorbs][:,dorbs]
                     G0 = np.linalg.inv(G0)
                     G1 = np.linalg.inv(G1)
-                    #G0 = BTDinv(G0, _piv_orig, btd, _ipiv_orig)
-                    #G1 = BTDinv(G1, _piv_orig, btd, _ipiv_orig)
                     
                     M1 = Gami0[dorbs][:,dorbs] @  G0
                     M2 = Gamj0[dorbs][:,dorbs] @ (G0.conj().T)
@@ -3662,7 +3586,6 @@ class SiP:
                     Tij1[ie, i, j] = np.sum(M1)
         transmission = Tij0[:, 0, 1] + Tij1[:, 0, 1]
 
-        
         np.savez_compressed(self.dir + '/' +self.sl+'.fakeTBT.npz',
                              transmission = transmission,
                              real_pivot   = piv,
@@ -3711,9 +3634,6 @@ class SiP:
            else:
                print('couldnt determine RSSE type?')
                return 'unknown'
-              
-              
-           
         return False
     
     def calculate_2E_RSSE(self, Ev, tdir=0, kdir=1, n_jobs = 4, 
@@ -3759,21 +3679,15 @@ class SiP:
         
         oidx_d   = list(set([i for i in range(Hd.no)]) - set(oidx_e1) - set(oidx_e2) - set(oidx_b))
         _eidx    = (list(idx_e1)  + list(idx_e2) )
-        #_oeidx   = (list(oidx_e1) + list(oidx_e2))
         _didx    = [i for i in range(Hd.na) if i not in (_eidx+idx_b)]
-        #_odidx= [i for i in range(Hd.no) if i not in _oeidx]
         
         kwdict.update({'buffer_orbs'  : oidx_b})
         kwdict.update({'buffer_atoms' : idx_b })
         
         Hdsub    = Hd.sub(_didx)
         Sdsub    = Sd.sub(_didx)
-        #print(Hdsub.shape)
         if len(self.buffer_atoms)!=0:
             print('Buffer atoms present')
-            #oidx_d = [i for i in oidx_d if i not in self.buffer_atoms]
-            #Hdsub    = Hdsub.remove(self.buffer_atoms)
-            #Sdsub    = Sdsub.remove(self.buffer_atoms)
         
         noL, noD, noR  = Hm.no, Hdsub.no, Hp.no
         ArL = np.zeros((4, Hd.nsc[kdir], noL, noL),dtype=np.complex128)
@@ -3801,38 +3715,22 @@ class SiP:
             ArD[0,ic], ArD[1,ic] = sisl2coup(Hdsub, Sdsub, i*y)
             
             _h,_s = sisl2coup(Hd, Sd, i*y)
-            #print(len(oidx_d))
-            #print(len(oidx_e1))
-            #print(Vdl.shape)
             Vdl[ic], Sdl[ic] = _h[oidx_d,:][:,oidx_e1], _s[oidx_d,:][:,oidx_e1]
             Vdr[ic], Sdr[ic] = _h[oidx_d,:][:,oidx_e2], _s[oidx_d,:][:,oidx_e2]
         
-        # assert np.allclose(Vdl[0], Vdl[2].T)
-        # assert np.allclose(Vdr[0], Vdr[2].T)
-        self.RSSEdata = {'Ev' : Ev,
-                         'ArL': ArL,
-                         'ArR': ArR,
-                         'ArD': ArD,
-                         'Vdl': Vdl,
-                         'Vdr': Vdr,
-                         'Sdr': Sdr,
-                         'Sdl': Sdl
+        self.RSSEdata = {'Ev' : Ev, 
+                         'ArL': ArL, 'ArR': ArR,  'ArD': ArD,
+                         'Vdl': Vdl, 'Vdr': Vdr,
+                         'Sdr': Sdr, 'Sdl': Sdl
                          }
         
         assert np.allclose(ArD[:,0], ArD[:,2].transpose(0,2,1))
         assert np.allclose(ArR[[0,2],0], ArR[[0,2],2].transpose(0,2,1))
         assert np.allclose(ArL[[0,2],0], ArL[[0,2],2].transpose(0,2,1))
-        # return ArL, ArR, ArD, Vdl, Vdr, Sdl, Sdr
         if dummy_calc == False:
             RES = self.Deci.par_integrate_GkLDR(Ev, ArL, ArD, ArR, Vdl, Vdr, Sdl, Sdr,
                                                 n_jobs=n_jobs, tol=tol, 
                                                 ty=ty, workers = workers)
-        #else:
-        #    _I = np.eye(noD * ty)
-        #    RES = [_I[None,:,:] for e in Ev]
-        #    #print(ArD[0,0].shape)
-            
-            
         
         if ty == 1:
             HR  = ArD[0,ny]
@@ -4061,29 +3959,6 @@ class SiP:
                 print('---- Spin-dn ------')
                 ossystem(command2)
         
-        ##SE_v = np.zeros((len(Contour), len(Xio), len(Xio)),
-        ##                 dtype=np.complex64)
-        # print(SE_v.shape)
-        ## tmp_files = os.listdir('_tmp_se')
-        ## tmp_files.remove('coups_a.npy')
-        ## tmp_files.remove('coups.npy')
-        ## tmp_files.remove('Htot.TSHS')
-        ## tmp_val   = np.array([complex(n.replace('.npz','')) for n in tmp_files])
-        ## for i in range(len(Contour)):
-        ##     ei = Contour[i]
-        ##     try: 
-        ##         f  = np.load('_tmp_se/'+str(ei)+'.npz')
-        ##     except:
-        ##         dist = np.abs(ei - tmp_val)
-        ##         if dist.min()<1e-14:
-        ##             fname_close = tmp_files[np.where(dist == dist.min())[0][0]]
-        ##         else:
-        ##             assert 1 == 0
-        ##         f = np.load('_tmp_se/'+fname_close)
-        ##     SE_v[i,:,:] = f['se_ele']
-        ## ossystem('rm -rf _tmp_se')
-        
-        
         if is_pol == False:
             if do_periodic == False:
                 folder_name = '_tmp_se/'
@@ -4107,14 +3982,10 @@ class SiP:
             
             Xio  = np.hstack([np.arange(Htot.a2o(i), Htot.a2o(i+1))
                               for i in Xidx])
-            #H0 =  Htot.Hk()[Xio[:, None], Xio[None, :]].toarray()
-            #S0 =  Htot.Sk()[Xio[:, None], Xio[None, :]].toarray()
             xyz_elec = Htot.xyz[Xidx]
             s_elec   = Htot.atoms.Z[Xidx].copy()
             print(xyz_elec.shape, )
             np.savez_compressed(self.dir+'/3D_bulk_SE.npz', 
-                                ###  SE=SE_v, 
-                                #H0=H0, S0=S0, 
                                 xyz_elec=xyz_elec, 
                                 Xio=Xio, Xidx=Xidx, s_elec = s_elec)
             return Htot.sub(Xidx)
@@ -4148,33 +4019,21 @@ class SiP:
             
             Xio1  = np.hstack([np.arange(Htot1.a2o(i), Htot1.a2o(i+1))
                               for i in Xidx1])
-            #H01 =  Htot1.Hk()[Xio1[:, None], Xio1[None, :]].toarray()
-            #S01 =  Htot1.Sk()[Xio1[:, None], Xio1[None, :]].toarray()
             xyz_elec1 = Htot1.xyz[Xidx1]
             s_elec1   = Htot1.atoms.Z[Xidx1].copy()
             np.savez_compressed(self.dir+'/3D_bulk_SE_up.npz', 
-                                #H01=H01, S01=S01, 
                                 xyz_elec1=xyz_elec1, 
                                 Xio1=Xio1, Xidx1=Xidx1, s_elec1 = s_elec1)
             ######## 
             Xio2  = np.hstack([np.arange(Htot2.a2o(i), Htot2.a2o(i+1))
                               for i in Xidx2])
-            #H02 =  Htot2.Hk()[Xio2[:, None], Xio2[None, :]].toarray()
-            #S02 =  Htot2.Sk()[Xio2[:, None], Xio2[None, :]].toarray()
             xyz_elec2 = Htot2.xyz[Xidx2]
             s_elec2   = Htot2.atoms.Z[Xidx2].copy()
             np.savez_compressed(self.dir+'/3D_bulk_SE_dn.npz', 
-                                #H02=H02, S02=S02, 
                                 xyz_elec2=xyz_elec2, 
                                 Xio2=Xio2, Xidx2=Xidx2, s_elec2 = s_elec2)
             print(xyz_elec1.shape, )
             return Htot1.sub(Xidx1), Htot2.sub(Xidx2)
-        
-                
-        
-        
-        
-        
     def from_custom(self,H, SEs, Ev, kv, S = None, SE_inds = None, E_F = 0.0, eta = 1e-3, tol = 1e-10, manual_piv = None):
         """
             H: Hamiltonian (nk, no, no) array.
@@ -4311,10 +4170,6 @@ class SiP:
         rot90  = np.array([[np.cos(deg), np.sin(deg)],
                            [-np.sin(deg), np.cos(deg)]])
         polys  = []
-        #plt.scatter(RSC[:,0],RSC[:,1])
-        #plt.scatter(RI[:,0],RI[:,1] )
-        #plt.scatter(R[:,0], R[:,1]+0.4, marker='*',color='k')
-        
         for i in range(len(RI)):
             ri    = RI[i].copy()
             dij   = np.linalg.norm(ri - RSC, axis=1)
@@ -4353,37 +4208,7 @@ class SiP:
             polys += [np.array(poly_points)[:-1].copy()]
         
         return polys
-    
-            
-               
-            
-        
-            
-            
-            
-            
-        
-        
-        
-        
-        
-        
-        
-        
-        
-    
-
-        
-    
-    
-    
-    # def use_custom_tbtgf(self):
-    #     self.elec_RSSE = not self.elec_RSSE
-    #     print('set elec_RSSE variable to ', self.elec_RSSE)
-        
-
-    
-    
+   
 
 def rotation_matrix(axis, theta):
     """
@@ -4399,28 +4224,6 @@ def rotation_matrix(axis, theta):
     return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
                      [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
                      [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
-
-
-def load_calculation(Devdir,  old_basis='SZ'):
-    from funcs import read_electrode
-    e = read_electrode(Devdir + '/TS_TBT.fdf')
-    elecs = []
-    for ed in e:
-        l,r,s = np.random.random((3,3)), np.random.random((10,3)), np.arange(10)+1
-        elecs += [SiP(l, r, s, 
-                      directory_name = ed, 
-                      overwrite = 'reuse',
-                      basis = old_basis,
-                      )
-                 ]
-    
-    Dev = SiP(l, r, s, 
-              directory_name = Devdir, 
-              overwrite = 'reuse',
-              basis = old_basis,
-              elecs = elecs
-              )
-    return Dev, elecs
 
 class sisl_replica_for_projection:
     def __init__(self, sip):
@@ -4502,12 +4305,6 @@ class dftb_charge:
         MapTo  = np.hstack(MapTo)
         self.AtOrbs = AtOrbs
         self.MapTo  = MapTo
-    #def formatq(self, q, piv):
-    #    mapto = 
-        
-    
-        
-        
     
     def set_Q_spinpol(self, Qv, idx = None, dQ_mode = False):
         fact  = 1.0
