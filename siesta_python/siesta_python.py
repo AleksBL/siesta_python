@@ -25,7 +25,7 @@ from config import GfModule_extension
 if GfModule_extension:
     from Gf_Module.Gf import read_SE_from_tbtrans
 
-terminal = os.system; rem = os.remove; ld = os.listdir
+rem = os.remove; ld = os.listdir
 wd = os.getcwd()
 
 PP_path = '../pp'
@@ -70,15 +70,15 @@ no_rem = ['siesta_python.py',
           'Save_TP'
           ]
 
-# def clean_dir():
-#     for fname in ld(wd):
-#         if fname in no_rem or '.py' in fname or 'Struct.fdf' in fname:
-#             pass
-#         else:
-#             if os.path.isdir(fname)==True: 
-#                 pass
-#             else:
-#                 rem(wd+'/'+fname)
+try:
+    os.environ["SIESTA_PYTHON_DRYRUN"]
+    _DRYRUN = True
+except:
+    _DRYRUN = False
+def ossystem(string):
+    if _DRYRUN:
+        return
+    os.system(string)
 
 class SiP:
     ######"Siesta in Python"#####
@@ -233,11 +233,11 @@ class SiP:
                 print('Couldnt read STRUCT.fdf, stopping')
                 assert 1 == 0
             if 'siesta.TBT.nc' in ld(directory_name):
-                os.system('mv ' + directory_name + '/siesta.TBT.nc '  + directory_name + '/old_siesta.TBT.nc ')
+                ossystem('mv ' + directory_name + '/siesta.TBT.nc '  + directory_name + '/old_siesta.TBT.nc ')
             if 'siesta.TBT_UP.nc' in ld(directory_name):
-                os.system('mv ' + directory_name + '/siesta.TBT_UP.nc '  + directory_name + '/old_siesta.TBT_UP.nc ')
+                ossystem('mv ' + directory_name + '/siesta.TBT_UP.nc '  + directory_name + '/old_siesta.TBT_UP.nc ')
             if 'siesta.TBT_DN.nc' in ld(directory_name):
-                os.system('mv ' + directory_name + '/siesta.TBT_DN.nc '  + directory_name + '/old_siesta.TBT_DN.nc ')
+                ossystem('mv ' + directory_name + '/siesta.TBT_DN.nc '  + directory_name + '/old_siesta.TBT_DN.nc ')
             
         ###### Initialize all the stuff neeeded to write a siesta .fdf file. 
         self.dir=directory_name
@@ -563,7 +563,6 @@ class SiP:
             command = 'dftb+ > RUN.out'
         else:
             command = 'dftb+ > /dev/null'
-        
         if subprocess:
             with open(os.devnull, 'wb') as devnull:
                 if wait:
@@ -576,7 +575,7 @@ class SiP:
         
         ###SCC RUN
         os.chdir(self.dir)
-        os.system(command)
+        ossystem(command)
         os.chdir('..')
     
     def write_and_run_dftb_in_dir(self, angmom, skip_HS_write = False,
@@ -602,7 +601,7 @@ class SiP:
                       PolynomialRepulsive=PolynomialRepulsive,
                       )
         self.run_dftb_in_dir(angmom)
-        os.system("cp "+self.dir + "/charges.dat "+self.dir+"/charges.orig.dat")
+        ossystem("cp "+self.dir + "/charges.dat "+self.dir+"/charges.orig.dat")
         #if skip_write_charges:
         #    return
         # assert 1 == 0
@@ -626,8 +625,8 @@ class SiP:
         if skip_HS_write:
             return
         os.chdir(self.dir)
-        os.system('mv band.out Band.out')
-        os.system('mv detailed.out Detailed.out')
+        ossystem('mv band.out Band.out')
+        ossystem('mv detailed.out Detailed.out')
         os.chdir('..')
         ### Write HS run
         self.dftb_hsd(angmom_dic           = angmom,
@@ -758,23 +757,19 @@ class SiP:
                         break
                     else:
                         name+=let
-                 
                 if Num2Sym[atom].replace('_ghost', '') == name and self.xc.lower() in pp:
                     paths+=['../'+self.pp_path+'/'+pp]
         self.pseudo_paths = paths
         it=0
         for p in paths:
             if '.psf' in p:
-                os.system('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psf')
+                ossystem('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psf')
                 it+=1
             if '.psml' in p:
-                os.system('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psml')
+                ossystem('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psml')
                 it+=1
-        
-    
     def add_elecs(self,L):
         self.elecs = L
-    
     def find_elec_inds(self, tol = 1e-2, correct_electrode_types = False, fast_way = True):
         """
             function finds and shuffles the electrode indices to the indices furthest 
@@ -784,13 +779,10 @@ class SiP:
             in self within a tolerance tol. 
             
         """
-        
         inds = [ [] for e in self.elecs ]
         it_e = 0
-        
         for e in self.elecs:
             if e.elec_RSSE == False:# or e.elec_SurRSSE:
-                
                 if isinstance(e.elec_bloch, list) or isinstance(e.elec_bloch, np.ndarray):
                     direcs = np.where(np.array(e.elec_bloch)>1)[0]#[0]
                     POS = e.pos_real_space.copy()
@@ -800,12 +792,6 @@ class SiP:
                         for i in range(1, e.elec_bloch[_d]):
                             POS = np.vstack((POS, A * i + tiler))
                         tiler = POS.copy()
-                    #for i in range(1,e.elec_bloch[direc]):
-                    #    POS = np.vstack((POS, A * i + e.pos_real_space))
-                    #if (np.array(e.elec_bloch)>1).sum()>1:
-                    #    print('Several bloch directions not implemented in siesta_python yet')
-                    #    error()
-                    
                     for i in range(len(POS)):
                         ri = POS[i]
                         if fast_way:
@@ -841,8 +827,6 @@ class SiP:
                                 rj = self.pos_real_space[j]
                                 if np.linalg.norm(ri-rj) < tol:
                                     inds[it_e]+=[j]
-                        
-            
             elif ((e.elec_RSSE or 
                      e.elec_surRSSE) 
                   and 
@@ -877,41 +861,29 @@ class SiP:
                         print('found double electrode index')
                         assert 1 == 0
 
-                
-            
             it_e += 1
         
         idx = np.arange(len(self.pos_real_space))
         np_inds = np.hstack([np.array(ind) for ind in inds])
-        
         idx = np.delete(idx, np_inds)
-        
         inds_new = []
         n=len(idx)
-        
         for idx_e in inds:
             idx = np.hstack((idx, np.array(idx_e)))
             inds_new +=[np.arange(n, n + len(idx_e))]
             n+=len(idx_e)
-        
         self.pos_real_space = self.pos_real_space[idx]
         self._rearange_indices = idx
-        
         print([[int(i) for i in ie] for ie in inds])
         if correct_electrode_types == True:
             it=0
             for e in self.elecs:
                 te = e.s.copy()
-                
                 if isinstance(e.elec_bloch, list) or isinstance(e.elec_bloch, np.ndarray):
-                    
                     te = np.hstack([te for i in range(max(e.elec_bloch))])
-                
                 self.s[inds[it]] = te
                 it+=1
-        
         self.s = self.s[idx]
-        
         if self.elec_inds is None:
             self.elec_inds = inds_new
         else:
@@ -930,7 +902,6 @@ class SiP:
             atoms_new = [self.s[i] for i in range(len(self.s))]
             elec_inds = []
             ind =len(self.pos[:,0])
-            
             for elec in self.elecs:
                 na = len(elec.pos[:,0])
                 pos_new   += [elec.pos_real_space[i,:] for i in range(na)]
@@ -952,7 +923,6 @@ class SiP:
                 f.write(l)
             f.write('\n')
             f.close()
-    
     def write_analysis_results(self):
         """
         after TBtrans analyze step, write the results to the TS_TBT file.
@@ -960,17 +930,14 @@ class SiP:
         """
         WRITE=read_analyze(self)
         self.write_more_fdf(WRITE,name = 'TS_TBT')
-    
     def run_tbt_analyze_in_dir(self):
         """ See TBtrans documentation for the use of the analyze step.
             This function simply writes the lowest memory result to 
             the TS_TBT file.
         """
-        
-        
         command =  self.mpi + self.tb_trans_exec  + ' -fdf TBT.Analyze RUN.fdf > RUN_Analyze.out'
         os.chdir(self.dir)
-        os.system(command)
+        ossystem(command)
         os.chdir('..')
         WRITE = read_analyze(self)
         self.write_more_fdf(WRITE, name = 'TS_TBT')
@@ -986,17 +953,12 @@ class SiP:
             
         
         """
-        
-        
-        
         if self.solution_method=='diagon':
             print('Running Siesta calculation in Directory: '+self.dir+ '!\n')
         elif self.solution_method=='transiesta':
             print('Running TranSiesta calculation in Directory: '+self.dir+ '!\n')
         n='RUN'    
-        
         command = self.mpi+self.siesta_exec+'<'+n+'.fdf '+self.print_no_print+' '+n+'.out'
-        
         if use_subprocess:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
@@ -1005,20 +967,18 @@ class SiP:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   )
             return
-        
         os.chdir(self.dir)
-        os.system(command)
+        ossystem(command)
         os.chdir('..')
-    
     
     def run_gulp_in_dir(self, mpi_run =False):
         """ Gulp calculation, inspect code. """
         print('Running Gulp calculation in Directory: '+self.dir+ '!\n')
         os.chdir(self.dir)
         if mpi_run == True:
-            os.system(self.mpi + self.gulp_exec+'< Gulp.gin > Gulp.gout')
+            ossystem(self.mpi + self.gulp_exec+'< Gulp.gin > Gulp.gout')
         else:
-            os.system(self.gulp_exec+'< Gulp.gin > Gulp.gout')
+            ossystem(self.gulp_exec+'< Gulp.gin > Gulp.gout')
         
         os.chdir('..')
         self.gulp_results=read_gulp_results(self)
@@ -1028,23 +988,19 @@ class SiP:
         n='RUN'       #self.sl
         if len(self.elecs)==0:
             print('why are you running analyze on something that has no electrodes attached?')
-        
         command = self.siesta_exec+'-fdf TS.Analyze '+n+'.fdf '+self.print_no_print+' '+n+'_Analyze.out' 
-        
         if use_subprocess:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   ).wait()
                 self.write_analysis_results()
-    
             else:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   )
                 print('Analysis results not written automatically!')
             return
-        
         os.chdir(self.dir)
-        os.system(command)
+        ossystem(command)
         os.chdir('..')
         self.write_analysis_results()
     
@@ -1059,15 +1015,12 @@ class SiP:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   ).wait()
-    
             else:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   )
-            
             return
-        
         os.chdir(self.dir)
-        os.system( command )
+        ossystem( command )
         os.chdir('..')
     
     def plot_calculated_bands(self):
@@ -1076,28 +1029,25 @@ class SiP:
         """
         
         os.chdir(self.dir)
-        os.system(self.bands_plot+' <'+self.sl+'.bands '+self.print_no_print+' gnubands.f')
+        ossystem(self.bands_plot+' <'+self.sl+'.bands '+self.print_no_print+' gnubands.f')
         # PyGnuplot.c('plot "gnubands.f"')
         os.chdir('..')
     def fatband_fdf(self):
         """ Fatbands """
         self.write_more_fdf(['WFS.Write.For.Bands True\n',
                              'COOP.Write True\n'])
-        
     
     def run_fatbands(self, proj):
         """ Fatbands """
-        
         write_mpr(self, proj)
         os.chdir(self.dir)
-        os.system('cp '  + self.sl+'.bands.WFSX ' + self.sl+'.WFSX')
-        os.system('fat ' + self.sl )
+        ossystem('cp '  + self.sl+'.bands.WFSX ' + self.sl+'.WFSX')
+        ossystem('fat ' + self.sl )
         files = os.listdir()
         for f in files:
             if '.EIGFAT' in f:
                 name = f[:-7]
-                os.system('eigfat2plot ' + f +' > ' + name + '.dat')
-        
+                ossystem('eigfat2plot ' + f +' > ' + name + '.dat')
         os.chdir('..')
     
     def custom_bandlines(self, path):
@@ -1115,7 +1065,6 @@ class SiP:
                             name = 'KP')
         self.write_more_fdf(['%endblock BandLines'],
                             name = 'KP')
-        
     
     def run_tbtrans_in_dir(self,DOS_GF= False, DOS_A=False, DOS_A_ALL=False,ORBITAL_CURRENT=False, Custom = [],
                            use_subprocess = False, wait = True, eta_elecs = None, overwrite_prev=False, _silent = True):
@@ -1124,7 +1073,6 @@ class SiP:
         self.write_tb_trans_kp()
         n = 'RUN'         #self.sl
         command = self.mpi+self.tb_trans_exec + n+'_TBT.fdf '+self.print_no_print+' '+n+'TBTCalc.out'
-        
         List = ['\n']
         if DOS_A:
             List+=['TBT.DOS.A T\n']
@@ -1145,12 +1093,12 @@ class SiP:
             _out  = ''
             if _silent:
                 _out = ' > /dev/null'
-            os.system('rm -f '+ self.dir + '/*.TBT.nc'+_out)
-            os.system('rm -f '+ self.dir + '/*.TBT_UP.nc'+_out)
-            os.system('rm -f '+ self.dir + '/*.TBT_DN.nc'+_out)
-            os.system('rm -f '+ self.dir + '/*.TBT.SE.nc'+_out)
-            os.system('rm -f '+ self.dir + '/*.TBT_UP.SE.nc'+_out)
-            os.system('rm -f '+ self.dir + '/*.TBT_DN.SE.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT_UP.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT_DN.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT.SE.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT_UP.SE.nc'+_out)
+            ossystem('rm -f '+ self.dir + '/*.TBT_DN.SE.nc'+_out)
         if use_subprocess:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
@@ -1159,13 +1107,9 @@ class SiP:
             else:
                 Popen('cd '+self.dir + ' && ' + 
                       command, shell = True   )
-            
             return
-        
-            
-        
         os.chdir(self.dir)
-        os.system(command)
+        ossystem(command)
         os.chdir('..')
     def _has_tbt_nc_files(self):
         for f in os.listdir(self.dir):
@@ -1189,8 +1133,7 @@ class SiP:
                     res = float(l.split("H")[1].replace("eV",""))
                 elif "Total energy" in l:
                     res = float(l.split("H")[1].replace("eV",""))
-                    
-        os.system("rm "+self.dir+"/RUN.out")
+        ossystem("rm "+self.dir+"/RUN.out")
         return res
                 
     def get_fermi_level(self):
@@ -1205,7 +1148,6 @@ class SiP:
     
     def dQ(self):
         """Read excess charge from transiesta calculation."""
-        
         dQ=None
         with open(self.dir+'/'+'RUN.out','r') as f:
             for l in f:
@@ -1232,9 +1174,7 @@ class SiP:
             
             Do this function before writting the fdf files with
             self.fdf
-            
         """
-        
         self.write_more_fdf(['%block Geometry.Hartree\n',
                             ' Bounded plane ' + str(Potential)  + ' eV \n',
                             '  gauss '+str(spread) + ' ' +    str(cut_off  )  + ' Ang\n',
@@ -1249,7 +1189,6 @@ class SiP:
                'vectors': [O,A,B],
                'spread': spread,
                'cut_off': cut_off}
-        
         self.add_stuff(dic)
     
     def Add_Charged_Bounded_Plane(self, O, A, B,  Charge, cut_off, spread, kind = 'gauss'):
@@ -1264,9 +1203,7 @@ class SiP:
             
             Do this function before writting the fdf files with
             self.fdf
-            
         """
-        
         string = ['%block Geometry.Charge\n',
                   ' Bounded plane ' + str(Charge)  + ' \n',
                   '  '+ kind +' ' + str(spread) + ' ' +    str(cut_off)  + ' Ang\n',
@@ -1275,10 +1212,8 @@ class SiP:
                   '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
                   '%endblock Geometry.Charge\n  ' 
                   ]
-        
         self.write_more_fdf(string,
                             name = 'STRUCT')
-        
         dic = {'what': 'charged bounded plane',
                'charge':  Charge,
                'vectors': [O,A,B],
@@ -1302,7 +1237,6 @@ class SiP:
             
         """
         
-        
         if O.shape==(3,):
             string = ['%block Geometry.Charge\n',
                       ' box ' +  str(Charge) + ' \n',
@@ -1313,7 +1247,6 @@ class SiP:
                       '  ' + str(C[0]) + ' ' + str(C[1]) + ' ' + str(C[2]) + ' Ang\n',
                       '%endblock Geometry.Charge\n  ' 
                       ]
-            
             self.write_more_fdf(string,
                                 name = 'STRUCT')
             write_this = string
@@ -1338,7 +1271,6 @@ class SiP:
         self.add_stuff(dic)
         if Ret:
             return write_this
-        
         
     def Add_Charged_Sphere(self, Cent,  R, Ch, cut_off = 5.0):
         """
@@ -1430,7 +1362,7 @@ class SiP:
             E = Contour.copy()
         
         H_minimal = sisl.get_sile(self.dir + '/' + self.sl + '.'+ending).read_hamiltonian()
-        os.system('mv '+self.dir+'/'+self.sl+'.'+ending+' '+self.dir+'/'+self.sl+'_minimal_old.'+ending)
+        ossystem('mv '+self.dir+'/'+self.sl+'.'+ending+' '+self.dir+'/'+self.sl+'_minimal_old.'+ending)
         if self.elec_2E_RSSE==False:
             RSSE      = sisl.RealSpaceSE(H_minimal, ax_decimation, ax_integrate, supercell, dk = dk)
             H_elec, elec_indices = RSSE.real_space_coupling(ret_indices=True)
@@ -1599,7 +1531,7 @@ class SiP:
         # minimal electrode Hamiltonian
         _ori_name = self.dir + '/' + self.sl + '.'+ending
         _new_name = self.dir + '/' + self.sl + '_minimal_old.'+ending
-        os.system('cp '+_ori_name + ' ' + _new_name)
+        ossystem('cp '+_ori_name + ' ' + _new_name)
         Hsurf.write(self.dir + '/' + self.sl + 'Hsurf_RSSI.TSHS')
         np.save(self.dir+'/elec_RSSI_params.npz', {'direc': translate(self.semi_inf),
                                                    'ax_integrate': ax_integrate,
@@ -1681,7 +1613,7 @@ class SiP:
             np.save(self.dir + '/RS_Coupling_specie.npy', f['s_elec'])
             _ori_name = self.dir + '/' + self.sl +'.TSHS'
             _new_name = self.dir + '/' + self.sl + '_minimal_old.TSHS'
-            os.system('cp '+_ori_name + ' ' + _new_name)
+            ossystem('cp '+_ori_name + ' ' + _new_name)
             H_elec.write(self.dir+'/'+self.sl+'.TSHS')
             print(H_elec.shape)
             if periodic == False:
@@ -1749,7 +1681,7 @@ class SiP:
                     
                     SeHSE = fnpz['se_ele']
                     f.write_self_energy(SeHSE)
-            os.system('rm -rf _tmp_se*')
+            ossystem('rm -rf _tmp_se*')
         else:
             H_elec1, H_elec2 = self.calculate_bulksurf_RSSE(**new_opts)
             H_elec = sisl.Hamiltonian.fromsp(H_elec1.geometry, 
@@ -1765,7 +1697,7 @@ class SiP:
             np.save(self.dir + '/RS_Coupling_specie.npy', f1['s_elec1'])
             _ori_name = self.dir + '/' + self.sl +'.TSHS'
             _new_name = self.dir + '/' + self.sl + '_minimal_old.TSHS'
-            os.system('cp '+_ori_name + ' ' + _new_name)
+            ossystem('cp '+_ori_name + ' ' + _new_name)
             H_elec.write(self.dir+'/'+self.sl+'.TSHS')
             print(H_elec.shape)
             if periodic == False:
@@ -1853,15 +1785,15 @@ class SiP:
                                                 H_elec.Sk(format='array', dtype=np.complex128,  k=k))
                     SeHSE = fnpz['se_ele']
                     f.write_self_energy(SeHSE)
-            os.system('rm -rf _tmp_se_up*')
-            os.system('rm -rf _tmp_se_dn*')
+            ossystem('rm -rf _tmp_se_up*')
+            ossystem('rm -rf _tmp_se_dn*')
         self.RSSE_Energy_from_to = (C.real.min(), C.real.max())
     
     def undo_RSSE(self, ending='TSHS'):
         _ori_name = self.dir + '/' + self.sl + '.'+ending
         _new_name = self.dir + '/' + self.sl + '_minimal_old.'+ending
-        os.system('rm '+_ori_name)
-        os.system('cp '+_new_name + ' ' + _ori_name)
+        ossystem('rm '+_ori_name)
+        ossystem('cp '+_new_name + ' ' + _ori_name)
     
     def get_RS_pos(self):
         """Retrieve positions and species of the atoms in the real space
@@ -1877,7 +1809,7 @@ class SiP:
     def reset_minimal_hamiltonian(self, ending = 'TSHS',k = ''):
         _new_name = self.dir + '/' + self.sl + '_minimal_old.'+ending
         old_name  = self.dir + '/' + self.sl + '.'+ending
-        os.system('mv '+k+_new_name + ' ' + old_name)
+        ossystem('mv '+k+_new_name + ' ' + old_name)
     
     def copy_DM_from(self, object, ftype='TSDE'):
         """
@@ -1887,21 +1819,13 @@ class SiP:
         """
         ftype_ ='.'+ftype+' '
         if isinstance(object, str):
-            os.system('cp '+object+'/*'+ftype_+self.dir+'/'+self.sl+ftype_)
+            ossystem('cp '+object+'/*'+ftype_+self.dir+'/'+self.sl+ftype_)
         if isinstance(object, SiP):
-            os.system('cp '+object.dir+'/'+object.sl+ftype_+self.dir+'/'+self.sl+ftype_)
+            ossystem('cp '+object.dir+'/'+object.sl+ftype_+self.dir+'/'+self.sl+ftype_)
         self.reuse_dm = True
     
-    #
-    #def copy_siesta_DM_from(self, object):
-    #    if isinstance(object, str):
-    #        os.system('cp ' + object + '/*.DM ' + self.dir+'/'+self.sl+'.DM')
-    #    if isinstance(object, SiP):
-    #        os.system('cp ' + object.dir + '/' + object.sl+'.DM ' + self.dir + '/' + self.sl + '.TSDE')
-    #    self.reuse_dm = True
-    
     def copy_TSHS_from(self, object):
-        os.system('cp ' + object.dir + '/' + object.sl+'.TSHS ' + self.dir + '/' + self.sl + '.TSHS')
+        ossystem('cp ' + object.dir + '/' + object.sl+'.TSHS ' + self.dir + '/' + self.sl + '.TSHS')
     def clone(self, newdir):
         from copy import deepcopy
         out = deepcopy(self)
@@ -1915,23 +1839,21 @@ class SiP:
                 if 'dftb_charge' in self.dic.keys() or "dftb_in.hsd" in os.listdir(self.dir):
                     print("Copying DFTB files to " + newdir)
                     def do_copy(n):
-                        os.system("cp "+self.dir+"/"+n+" "+newdir+"/")
+                        ossystem("cp "+self.dir+"/"+n+" "+newdir+"/")
                     do_copy("*.out")
                     do_copy("*.dat")
                     do_copy("*.hsd")
                     do_copy("*.fdf")
                     return out
         print("Copying SIESTA files to " +newdir)
-        os.system("cp "+self.dir+"/*.fdf "+newdir+"/")
-        os.system("cp "+self.dir+"/*.psf "+newdir+"/")
-        os.system("cp "+self.dir+"/*.psml "+newdir+"/")
-        os.system("cp "+self.dir+"/*.ion.nc "+newdir+"/")
-        
+        ossystem("cp "+self.dir+"/*.fdf "+newdir+"/")
+        ossystem("cp "+self.dir+"/*.psf "+newdir+"/")
+        ossystem("cp "+self.dir+"/*.psml "+newdir+"/")
+        ossystem("cp "+self.dir+"/*.ion.nc "+newdir+"/")
         if self.solution_method=='transiesta':
             out.copy_DM_from(self, ftype='TSDE')
         else:
             out.copy_DM_from(self,ftype='DM')
-        
         return out
     
     def save_file(self, file, folder, newname):
@@ -1939,7 +1861,7 @@ class SiP:
             os.mkdir(folder)
         except:
             pass
-        os.system('cp ' + object.dir + '/' + file  + ' ' +  folder + '/' + newname )
+        ossystem('cp ' + object.dir + '/' + file  + ' ' +  folder + '/' + newname )
     
     def mulliken(self):
         idx, C = Mulliken(self.dir + '/RUN.out')
@@ -1964,17 +1886,16 @@ class SiP:
                     
                     else: f.write(l)
                 f.close()
-            
     
     def gen_basis(self):
         os.chdir(self.dir)
         files_before = ld()
-        os.system(self.gen_basis_exec + '<RUN.fdf> out')
+        ossystem(self.gen_basis_exec + '<RUN.fdf> out')
         for f in ld():
             if f in files_before:
                 pass
             else:
-                os.system('cp '+f +' orbital_directory/'+f)
+                ossystem('cp '+f +' orbital_directory/'+f)
                 if '.py' in f or f in no_rem:
                     pass
                 else:
@@ -1991,11 +1912,10 @@ class SiP:
             if ( ( ( self.s >= 0 ) * (d<min_dist) ).sum() )>1:
                 print('atoms too close...')
                 error()
-        #print('No atoms overlapping within ' +str(min_dist) +' Å!')
     
     def delete_fdf(self,name):
         os.chdir(self.dir)
-        os.system('rm ' + name  + '.fdf')
+        ossystem('rm ' + name  + '.fdf')
         os.chdir('..')
     
     def manual_k_points(self,reduced_k_arr,weights, tbtrans = False):
@@ -2022,17 +1942,14 @@ class SiP:
         v = tri.simplices
         Weights = []
         kgrid = []
-        
         for t in v:
             center = np.average(p[t],axis = 0)
             area   = PolyArea(p[t,0], p[t,1])
             kgrid   += [center]
             Weights += [area]
-        
         kgrid = np.array(kgrid)
         Weights = np.array(Weights)
         kgrid = np.hstack((kgrid, np.zeros((len(kgrid), 1))))
-        
         self._manual_kgrid   = kgrid
         self._manual_weights = Weights
         self._manual_kgrid_tri = tri
@@ -2042,19 +1959,14 @@ class SiP:
         from scipy.spatial import Delaunay
         from funcs import PolyArea
         ls = np.linspace
-        
         for p in points:
             p[0] = np.mod(p[0], 1)
             p[1] = np.mod(p[1], 1)
-        
         Grid = []
         kx,ky = np.meshgrid(ls(0,1, nk[0]), ls(0,1, nk[1]), indexing = 'ij')
-        
-        
         for i in range(nk[0]):
             for ii in range(nk[1]):
                 Grid += [[kx[i,ii], ky[i,ii]]]
-        
         for c in points:
             rg  = ls(0,1, n_points+1)[1:] * r
             phi = ls(0,2* np.pi, n_points + 1) [:-1]
@@ -2068,30 +1980,24 @@ class SiP:
             Grid += [[c[0], c[1]]]
             for ip in range(len(x)):
                 Grid += [[np.mod(x[ip],1), np.mod(y[ip],1)]]
-        
         Grid = np.array(Grid)
         tri = Delaunay(Grid)
         p = tri.points
         v = tri.simplices
         Weights = []
         kgrid = []
-        
         for t in v:
             center = np.average(p[t],axis = 0)
             area   = PolyArea(p[t,0], p[t,1])
             kgrid   += [center]
             Weights += [area]
-        
         kgrid = np.array(kgrid)
         Weights = np.array(Weights)
         kgrid = np.hstack((kgrid, np.zeros((len(kgrid), 1))))
-        
         self._manual_kgrid   = kgrid
         self._manual_weights = Weights
         self._manual_kgrid_tri = tri
         self.manual_k_points(kgrid, Weights)
-    
-    
     def ideal_cell_charge(self,chargedic,spindeg=True):
         q = 0.0
         for s in self.s:
@@ -2141,8 +2047,6 @@ class SiP:
             return H,S
         if what=='TSDE':
             return sisl.get_sile(self.dir +'/' +self.sl+'.TSDE').read_density_matrix()
-        
-    
     
     def read_TSHS(self, front = None, from_RUN=False):
         if from_RUN:
@@ -2153,10 +2057,7 @@ class SiP:
             name = front
         if self.Hubbard_electrode == 'Yes':
             name = 'Hubbard_'+name
-        #try:
         return sisl.get_sile(self.dir+'/'+name+'.TSHS').read_hamiltonian()
-        #except:
-        #    res = sisl.get_sile(self.dir+'/'+name+'.HSX').read_hamiltonian()
     
     def read_minimal_TSHS(self):
         """ Meant for reading the minimal Hamiltonian
@@ -2315,14 +2216,14 @@ class SiP:
             
             return
         os.chdir(  self.dir )
-        os.system( command  )
+        ossystem( command  )
         os.chdir('..')
         # print(command)
         with open(self.dir + '/MIXLABEL') as f:
             for l in f:
                 mixlabel = l
         command2 = 'cp ' + self.dir + '/' + mixlabel[:-1] + '.psf' + ' ' + self.dir + '/' +name + '.psf'
-        os.system(command2)
+        ossystem(command2)
         with open(self.dir + '/' + mixlabel[:-1] + '.synth') as f:
             lines = []
             for l in f:
@@ -3487,7 +3388,7 @@ class SiP:
                             k = kv)
         
         #replace the real file with the fake
-        os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
+        ossystem('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
         print("Calculating spin-resolved transmission")
         if memory_save:
             ne = Contour.shape[0]
@@ -3603,7 +3504,7 @@ class SiP:
         try:
             Hd     = self.read_TSHS()
         except:
-            os.system("cp "+self.dir+ "/siesta.hiddenTSHS "+self.dir+ "/siesta.TSHS ")
+            ossystem("cp "+self.dir+ "/siesta.hiddenTSHS "+self.dir+ "/siesta.TSHS ")
             Hd     = self.read_TSHS()
         nonzeros=  abs(Hd.Sk())+ abs(Hd.Hk())
         borbs   =  Hd.a2o(self.buffer_atoms, all=True)
@@ -3703,7 +3604,7 @@ class SiP:
                             k = kv)
         
         #replace the real file with the fake
-        os.system('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
+        ossystem('mv '+self.dir+'/'+self.sl+'.TSHS ' +self.dir+'/'+self.sl+'.hiddenTSHS ')
         print("Calculating spin-resolved transmission")
         ne = Contour.shape[0]
         na = len(SEs)
@@ -4082,7 +3983,7 @@ class SiP:
                                                       or "init_grid_N" not in p)])
                 
             if reuse==False:
-                os.system(command)
+                ossystem(command)
         else:
             _Hs = sisl.get_sile(sHname).read_hamiltonian()
             _Hb = E.read_TSHS()
@@ -4154,11 +4055,11 @@ class SiP:
                 print('-------------------')
                 print('-------------------')
                 print('---- Spin-up ------')
-                os.system(command1)
+                ossystem(command1)
                 print('-------------------')
                 print('-------------------')
                 print('---- Spin-dn ------')
-                os.system(command2)
+                ossystem(command2)
         
         ##SE_v = np.zeros((len(Contour), len(Xio), len(Xio)),
         ##                 dtype=np.complex64)
@@ -4180,7 +4081,7 @@ class SiP:
         ##             assert 1 == 0
         ##         f = np.load('_tmp_se/'+fname_close)
         ##     SE_v[i,:,:] = f['se_ele']
-        ## os.system('rm -rf _tmp_se')
+        ## ossystem('rm -rf _tmp_se')
         
         
         if is_pol == False:
