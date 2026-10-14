@@ -213,12 +213,9 @@ class SiP:
                     Reuse=True
                 else:
                     assert 1==0
-        
         if Reuse == False:
             os.mkdir(directory_name)
             os.mkdir(directory_name+'/orbital_directory')
-            os.mkdir(directory_name+'/lua_comm')
-        
         if Reuse == True:
             try:
                 p,lat = read_geom_from_fdf(directory_name + '/' + 'STRUCT.fdf')
@@ -1851,19 +1848,16 @@ class SiP:
         else:
             out.copy_DM_from(self,ftype='DM')
         return out
-    
     def save_file(self, file, folder, newname):
         try:
             os.mkdir(folder)
         except:
             pass
-        ossystem('cp ' + object.dir + '/' + file  + ' ' +  folder + '/' + newname )
-    
+        ossystem('cp ' + self.dir + '/' + file  + ' ' +  folder + '/' + newname )
     def mulliken(self):
         idx, C = Mulliken(self.dir + '/RUN.out')
         self.Mulliken_idx = idx
         self.Mulliken_C   = C 
-    
     def write_tb_trans_kp(self):
         if self.kp_tbtrans == None and hasattr(self, 'manual_tbtrans_kpoint') == False:
             print('no k-poins for tbtrans!')
@@ -2492,11 +2486,8 @@ class SiP:
             a1=self.lat[0,:].copy(); a2=self.lat[1,:].copy(); a3=self.lat[2,:].copy()
         else:
             a1, a2, a3 = cell.copy()
-        
         a1-= shrink * a1/np.linalg.norm(a1); a2-= shrink * a2/np.linalg.norm(a2)
         a3-= shrink * a3/np.linalg.norm(a3)
-        
-        
         #zero = -shrink * a1/np.linalg.norm(a1) - shrink * a2/np.linalg.norm(a2)-shrink * a3/np.linalg.norm(a3)
         if strict_z==False: 
             zero=np.array([0,0,-shrink])
@@ -2562,10 +2553,8 @@ class SiP:
                     color[i,:] = np.array(colors[us.index(self.s[i])])
             else:
                 color[i,:] = np.array(colors[us.index(self.s[i])])
-            
             if i in self.buffer_atoms:
                 color[i,:] = np.array([0.5,0,1])
-        #print(color)
         if hasattr(self, 'Mulliken_C'):
             print('Mulliken plot')
             C = self.Mulliken_C
@@ -2584,15 +2573,11 @@ class SiP:
                 r_plot=self.pos_real_space+Tv
                 plt.scatter(r_plot[:,axes[0]],r_plot[:,axes[1]],c=shade * color, s  = adjust_size * np.pi*Vals**2*100)
                 if annotate == True:
-                    
                     for ii in range(len(r_plot)):
                         pos = (r_plot[ii, axes[0]],r_plot[ii, axes[1]] )
                         plt.annotate(str(Mull[ii]),pos)
-                        
-        
         else:
             print('Normal plot')
-            
             for t in T:
                 if t == [0,0]:
                     shade = 1.0
@@ -2611,8 +2596,7 @@ class SiP:
                     sortidx = np.argsort(r_plot[:,sortax[0]])[::-1]
                     r_plot = r_plot[sortidx,:]
                     COLOR = COLOR[sortidx]
-                    #ss = self.s[sortidx].copy()
-                
+                    
                 plt.scatter(r_plot[:,axes[0]],r_plot[:,axes[1]],c=shade * COLOR, s = size)
                 if annotate == True:
                     for i,pi in enumerate(self.pos_real_space):
@@ -2622,7 +2606,6 @@ class SiP:
             Sphere_C = []
             R_vec = []
             for d in self.Added_stuff:
-                
                 if d['what'] == 'charged sphere':
                     Cent, R = d['vectors']
                     x,y = Cent[axes]
@@ -2630,7 +2613,6 @@ class SiP:
                     R_vec    +=  [R]
                 elif d['what'] == 'dipole correction':
                     pass
-                
                 else:
                     vecs = d['vectors']
                     O = vecs[0];
@@ -2700,7 +2682,6 @@ class SiP:
                 plt.savefig(self.dir+'/DOS.svg')
             except:
                 pass
-            
         except:
             pass
         plt.close()
@@ -2708,7 +2689,7 @@ class SiP:
             return
         def Map(s):
             if 'gamma' in s.lower():
-                s =  '\Gamma'
+                s =  r'\Gamma'
             out = r'$'+s+'$'
             return out
         for i,e in enumerate(self.elecs):
@@ -2718,12 +2699,7 @@ class SiP:
                 b1,b2 = custom_bp[i]
             b2 = [Map(b2i) for b2i in b2]
             h  = e.read_TSHS()
-            #print(h)
             band = sisl.BandStructure(h, b1, nk, b2)
-            # ev = np.zeros((len(bs.k), h.no))
-            # for i,ki in enumerate(bs.k):
-            #     ev[i] = h.eigh(k=ki)
-            # plt.plot
             bs = band.apply.array.eigh(spin=spin)
             lk, kt, kl = band.lineark(True)
             plt.xticks(kt, kl)
@@ -2742,11 +2718,6 @@ class SiP:
             plt.close()
             e.Visualise(axes=axes)
             plt.close()
-            
-        
-    
-    
-    
     def read_basis_and_geom(self):
         from sisl.io.siesta.basis import ionncSileSiesta
         files = ld(self.dir)
@@ -3205,12 +3176,8 @@ class SiP:
                        directory_name = self.dir + '_proj_['+str(Emin)+'; '+str(Emax)+']',
                        sm = self.sm, sl = self.sl, 
                        )
-        
         Dr = SiP_proj.dir
         sl = SiP_proj.sl
-        
-        # 😄🍊🤮 python can do emojis
-        
         np.savez_compressed(Dr + '/' +sl+'.fakeTBT.npz',
                              transmission = sile.transmission(),
                              real_pivot   = sile.pivot(),
