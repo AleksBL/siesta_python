@@ -20,28 +20,13 @@ from config import GfModule_extension
 if GfModule_extension:
     from Gf_Module.Gf import read_SE_from_tbtrans
 
-rem = os.remove; ld = os.listdir
-wd = os.getcwd()
+from sip_shared import (ld, ossystem, wd, PP_path, sp, tb_trans_exec, B,
+                        pdos_exec, gulp_path, gen_basis, mix_ps,
+                        joblib_backend, M)
+from sip_config import SiPConfig
+import sip_fdf
 
-PP_path = '../pp'
-#put siesta and tbtrans in path....#
-#M             = 'mpirun '
-
-sp            = 'siesta '
-tb_trans_exec = 'tbtrans '
-B             = 'gnubands '
-pdos_exec     = 'fmpdos'
-gulp_path     = 'gulp '
-gen_basis     = 'gen-basis '
-mix_ps        = 'mixps '
-joblib_backend= 'multiprocessing'
-
-M             = ''
-try:
-    M = os.environ['mpi_exec']
-except:
-    pass
-
+rem = os.remove
 def error():
     """  
         Throw an error.
@@ -65,91 +50,10 @@ no_rem = ['siesta_python.py',
           'Save_TP'
           ]
 
-try:
-    os.environ["SIESTA_PYTHON_DRYRUN"]
-    _DRYRUN = True
-except:
-    _DRYRUN = False
-def ossystem(string):
-    if _DRYRUN:
-        return
-    os.system(string)
-
 class SiP:
     ######"Siesta in Python"#####
     # ASE-like interface for managing transport calculations with Transiesta and  TBtrans + more
-    def __init__(self,lat,pos,s, # lat: (3,3) np array, pos:(n_at,3) np.array, s (n_at,) np array of integers
-                 directory_name='noname',
-                 sm = 'siesta',
-                 sl = 'siesta',
-                 spin_pol = 'non-polarized',
-                 energy_shift = None,      
-                 dm_mixing_weight = None, # Mixer Opts
-                 number_pulay = None,     # Mixer Opts
-                 dm_tol = '1.d-4',
-                 xc     = 'GGA',
-                 xc_authors='PBE',
-                 basis  = 'SZP',
-                 mesh_cutoff = 150,
-                 max_scf_it  = 300, 
-                 kgridcutoff = None,
-                 solution_method = None,#'diagon',
-                 electronic_temperature_mev = 25,
-                 calc_bands = False,              # Calculate band structure in sisl instead
-                 kp         = [1,1,1],
-                 k_shift    = 0.0,
-                 TwoDim     = True,
-                 write_matrices = True,
-                 pp_path    = PP_path,
-                 wd         = wd,
-                 siesta_exec= sp,
-                 tb_trans_exec = tb_trans_exec,
-                 gen_basis  = gen_basis,
-                 mpi        = M,
-                 PDOS_EXEC=pdos_exec,
-                 Gulp_exec=gulp_path,
-                 Bands_plot = B,
-                 mix_ps = mix_ps,
-                 Standardize_cell=False,        # standardizes cell to seekpath convention
-                 elec_inds  = None,             # set here or use method find_elec_inds
-                 print_console = False,         # you want to all the printing?
-                 Chem_Pot   = None,             # list of floats (2 elecs: [.0, .0])
-                 semi_inf   = None,             # '+a1', '-a1' etc
-                 elecs      = [],               # If solution_method is transiesta, you'll need to supply some electrodes
-                 buffer_atoms = [],             # set here or use the method set_buffer_atoms
-                 Device_atoms = [],             # ???
-                 kp_tbtrans = [1,1,1],          # 
-                 #save_EP    = False,           # ???
-                 save_potentials=False,         # VT and VH
-                 trans_emin = -1,               # Values for tbtrans transport calculation
-                 trans_emax =  1,               #
-                 trans_delta= 0.02,             # 
-                 custom_tbtrans_contour = None, # supply a custom tbtrans contour (n_E,) np array
-                 NEGF_calc  = False,            # toggle non-equilibrium flags in fdf files. Autoset when Chem_Pot!=0
-                 reuse_dm   = False,            # Reuse siesta.DM / siesta.TSDE file
-                 set_pdos   = None,             # ???
-                 #save_es    = False,            # ???
-                 overwrite  = True,             # True, False, 'reuse', overwrite directory folder?
-                 mixer      = 'Pulay',          # SCF mixer, see siesta manual
-                 n_hist     = 8,                # history for mixer, see siesta manual
-                 elec_bloch = None,             # bloch tiling of electrode, see siesta/tbtrans manual
-                 mix_what   = 'Hamiltonian',    # 'Hamiltonian', 'Density', 'Charge', see transiesta manual
-                 elec_RSSE  = False,            # Electrode is real space electrode? 
-                 elec_SurRSSE = False,          # Electrode is semi-infinite real space electrode?
-                 elec_2E_RSSE = False,
-                 elec_3D_RSSE = False,
-                 save_SE    = False,            # write *TBT_SE.nc files?
-                 save_SE_only = False,          # do nothing else but calculate SE?
-                 lua_script = None,             # does nothing yet
-                 dictionary = None,             # ???
-                 skip_distance_check = False,   # Code checks distances between atoms, can be lengthy for big systems
-                 skip_spg_sp = False,           # spacegroup of system, --||--
-                 print_mulliken = False,        # mulliken in out file?
-                 denchar_files = False,         # 
-                 contour_settings=None,         # Custom transiesta contour (dictionary). See siesta_python.funcs for implementation.
-                 
-                 ):
-        
+    def __init__(self, lat, pos, s, directory_name='noname', **overrides):
         """
             Very long but fairly easy to understand initialisation of the
             instance of the siesta_python class. You will find most of the
@@ -180,8 +84,21 @@ class SiP:
         in the Zandpack code which uses this code extensively. 
         
         """
-        
-        
+        cfg = SiPConfig(**overrides)
+        # materialise every option as a local of the same name, so the
+        # body below can stay exactly as it was written (see sip_config.SiPConfig)
+        (sm, sl, spin_pol, energy_shift, dm_mixing_weight, number_pulay, dm_tol, xc, xc_authors,
+         basis, mesh_cutoff, max_scf_it, kgridcutoff, solution_method,
+         electronic_temperature_mev, calc_bands, kp, k_shift, TwoDim, write_matrices,
+         pp_path, wd, siesta_exec, tb_trans_exec, gen_basis, mpi, PDOS_EXEC, Gulp_exec,
+         Bands_plot, mix_ps, Standardize_cell, elec_inds, print_console, Chem_Pot,
+         semi_inf, elecs, buffer_atoms, Device_atoms, kp_tbtrans, save_potentials,
+         trans_emin, trans_emax, trans_delta, custom_tbtrans_contour, NEGF_calc,
+         reuse_dm, set_pdos, overwrite, mixer, n_hist, elec_bloch, mix_what, elec_RSSE,
+         elec_SurRSSE, elec_2E_RSSE, elec_3D_RSSE, save_SE, save_SE_only, lua_script,
+         dictionary, skip_distance_check, skip_spg_sp, print_mulliken, denchar_files,
+         contour_settings) = (getattr(cfg, _f) for _f in cfg.__dataclass_fields__)
+
         assert pos.shape[0] == len(s)
         Reuse=False
         for i in ld(wd):
@@ -286,7 +203,6 @@ class SiP:
         if self.Chem_Pot is not None:
             _CP = self.Chem_Pot
             self.Voltage          = max(max(_CP) - min(_CP), max([abs(cp) for cp in _CP]))
-            #self.Voltage          = max(Chem_Pot) - min(Chem_Pot)
         else:
             self.Voltage = None
         self.semi_inf         = semi_inf
@@ -323,8 +239,6 @@ class SiP:
         # Default hubbard_electrode:
         self.is_hubbard_electrode = False
 
-        
-        
         if skip_distance_check == True:
             pass
         else:
@@ -362,8 +276,6 @@ class SiP:
             positions += [fpos_i]
         
         self.pos   = np.array(positions)
-        
-        #Shitty name, yes, but now it is there. 
         self.pos_real_space = pos
         
         self.cell_spg = (self.lat,self.pos,np.abs(s))
@@ -431,7 +343,7 @@ class SiP:
             print('You have already set device atoms. Dont give these if you want to use this')
     
     def barebone_fdf(self, eta = 0.0):
-        barebones_RUN(self, eta = eta)
+        return sip_fdf.barebone_fdf(self, eta)
     def make_bandpath(self,zdir=2):
         v = [self.sym_dic[i] for i in self.sym_dic.keys()]
         Names  = [i for i in self.sym_dic.keys()]
@@ -454,53 +366,16 @@ class SiP:
         bz_path_names += [bz_path_names[0]]
         return bz_path, bz_path_names
     
-    
-    
     def fdf(self, eta = 0.0, manual_pp = [], fix_hartree = False, parallel_k=False):
         """
             Standardised fdf files for running siesta
         
         """
-        
-        write_fdf(self, eta = eta)
-        if self.Voltage is None:
-            pass
-        elif self.Voltage!=0 and fix_hartree:
-            self.write_more_fdf(['TS.Hartree.Fix -A'])
-        self.get_pseudo_paths(manual = manual_pp)
-        if hasattr(self, '_mixing_dic'):
-            for k in self._mixing_dic.keys():
-                atoms, frac = self._mixing_dic[k]
-                self.ps_mixer(atoms, frac, k)
-            self.dump_pseudo_list_to_struct()
-        
-        if self.dic != None:
-            keys = self.dic.keys()
-            keys = [k for k in keys if 'dftb' not in k]
-            for k in keys:
-                v = self.dic[k]
-                if len(k.split())==1:
-                    which = 'DEFAULT'
-                else:
-                    which = k.split(' ')[0]
-                    k = k.split(' ')[1]
-                self.write_more_fdf([k+ ' ' + v], name = which)
-        if parallel_k:
-            self.set_parallel_k()
-        
-    
-    def fdf_relax(self, Constraints, force_tol = 0.01, max_it = 1000, 
+        return sip_fdf.fdf(self, eta, manual_pp, fix_hartree, parallel_k)
+
+    def fdf_relax(self, Constraints, force_tol = 0.01, max_it = 1000,
                   parallel_k=False, variable_cell = False):
-        if self.solution_method=='transiesta':
-            self.fdf()
-        write_relax_fdf(self, Constraints = Constraints, 
-                        force_tol = force_tol, max_it = max_it,
-                        variable_cell = variable_cell)
-        if self.solution_method=='transiesta':
-            self.write_more_fdf(['%include TS_TBT.fdf'], name = 'RUN')
-        self.get_pseudo_paths()
-        if parallel_k:
-            self.set_parallel_k()
+        return sip_fdf.fdf_relax(self, Constraints, force_tol, max_it, parallel_k, variable_cell)
     
     def read_relax(self):
         p,l = read_siesta_relax(self.dir + '/'+self.sl+'.XV')
@@ -508,24 +383,7 @@ class SiP:
         self.relaxed_lat = l
     
     def gin(self,cell_opti=[],f=None, var_cell = None, relax_only = False, phonons=False):
-        fix=[]
-        if f is None and var_cell is None:
-            pass
-        elif f is not None:
-            for i in range(len(self.pos_real_space)):
-                pi=self.pos_real_space[i,:]
-                if f(pi)==True:
-                    fix+=[[0,0,0]]
-                else:
-                    fix+=[[1,1,1]]
-        elif var_cell is not None:
-            for i in range(len(self.pos_real_space)):
-                if i in var_cell:
-                    fix+=[[1,1,1]]
-                else:
-                    fix+=[[0,0,0]]
-        
-        write_gin(self,cell_opti=cell_opti,fix=fix, relax_only = relax_only, phonons=phonons)
+        return sip_fdf.gin(self, cell_opti, f, var_cell, relax_only, phonons)
     
     def dftb_hsd(self, Scc = 'Yes', write_cell = True, angmom_dic = {},
                        ReadInititialCharges = 'No', WriteChargesAsText = 'Yes', ReadChargesAsText = 'No',
@@ -535,21 +393,7 @@ class SiP:
                        UnpairedElectrons = 0.0, PolynomialRepulsive=None,
                        ):
         
-        write_dftb_hsd(self, Scc = Scc, write_cell = write_cell, angmom_dic = angmom_dic,
-                             ReadInitialCharges = ReadInititialCharges, WriteChargesAsText=WriteChargesAsText,
-                             ReadChargesAsText=ReadChargesAsText, WriteRealHS    = WriteRealHS, 
-                             CalculateForces=CalculateForces,     SkipChargeTest = SkipChargeTest,
-                             ThirdOrderFull = ThirdOrderFull, HubDeriv=HubDeriv,DampCor=DampCor,
-                             Spin = Spin, InitSpin = InitSpin, SpinConstants = SpinConstants,
-                             CustomHubbard = CustomHubbard, UnpairedElectrons = UnpairedElectrons,
-                             PolynomialRepulsive=PolynomialRepulsive, 
-                             )
-        
-        
-        if self.dic is None:
-            self.dic = {'dftb_angmom': angmom_dic}
-        else:
-            self.dic.update({'dftb_angmom': angmom_dic})
+        return sip_fdf.dftb_hsd(self, Scc, write_cell, angmom_dic, ReadInititialCharges, WriteChargesAsText, ReadChargesAsText, WriteRealHS, CalculateForces, SkipChargeTest, ThirdOrderFull, HubDeriv, DampCor, Spin, InitSpin, SpinConstants, CustomHubbard, UnpairedElectrons, PolynomialRepulsive)
     
     def run_dftb_in_dir(self,silent = False, subprocess=False,wait=False):
         if silent==False:
@@ -595,10 +439,7 @@ class SiP:
                       )
         self.run_dftb_in_dir(angmom)
         ossystem("cp "+self.dir + "/charges.dat "+self.dir+"/charges.orig.dat")
-        #if skip_write_charges:
-        #    return
-        # assert 1 == 0
-        
+
         if self.spin_pol in ["polarized", "polarised"]:
             detailed_out_up = read_mulliken_from_detailedout_spinpol(self.dir+'/detailed.out', "up")
             detailed_out_dn = read_mulliken_from_detailedout_spinpol(self.dir+'/detailed.out', "down")
@@ -735,32 +576,7 @@ class SiP:
         
     
     def get_pseudo_paths(self, manual = [], labs = None):
-        paths=[]
-        
-        atoms = unique_list(self.s) + manual
-        atoms = [a for a in atoms if a <= 200]
-        
-        Dir   = self.pp_path
-        PPs   = ld(Dir)
-        for atom in atoms:
-            for pp in PPs:
-                name=''
-                for let in pp:
-                    if let=='.':
-                        break
-                    else:
-                        name+=let
-                if Num2Sym[atom].replace('_ghost', '') == name and self.xc.lower() in pp:
-                    paths+=['../'+self.pp_path+'/'+pp]
-        self.pseudo_paths = paths
-        it=0
-        for p in paths:
-            if '.psf' in p:
-                ossystem('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psf')
-                it+=1
-            if '.psml' in p:
-                ossystem('ln -s '+ p +' '+self.dir+'/'+ Num2Sym[atoms[it]]+'.psml')
-                it+=1
+        return sip_fdf.get_pseudo_paths(self, manual, labs)
     def add_elecs(self,L):
         self.elecs = L
     def find_elec_inds(self, tol = 1e-2, correct_electrode_types = False, fast_way = True):
@@ -884,8 +700,7 @@ class SiP:
     
     def set_parallel_k(self):
         """ Toggles DiagK siesta option"""
-        if len(self.elecs) == 0:
-            self.write_more_fdf(['Diag.ParallelOverK True\n'])
+        return sip_fdf.set_parallel_k(self)
     
     def make_device_coords(self):
         if len(self.elecs) == 0:
@@ -910,12 +725,7 @@ class SiP:
             
             L is a list of string like ['TBT.DOS Gf True \n', ...]
         """
-        with open(self.dir+'/'+name+'.fdf','a') as f:
-            f.write('\n')
-            for l in L:
-                f.write(l)
-            f.write('\n')
-            f.close()
+        return sip_fdf.write_more_fdf(self, L, name)
     def write_analysis_results(self):
         """
         after TBtrans analyze step, write the results to the TS_TBT file.
@@ -1027,8 +837,7 @@ class SiP:
         os.chdir('..')
     def fatband_fdf(self):
         """ Fatbands """
-        self.write_more_fdf(['WFS.Write.For.Bands True\n',
-                             'COOP.Write True\n'])
+        return sip_fdf.fatband_fdf(self)
     
     def run_fatbands(self, proj):
         """ Fatbands """
@@ -1044,20 +853,7 @@ class SiP:
         os.chdir('..')
     
     def custom_bandlines(self, path):
-        self.delete_fdf('KP')
-        self.write_more_fdf(['%block kgrid.MonkhorstPack\n',
-                              str(self.kp[0])+'  0  0  0.0\n',
-                              '0  '+str(self.kp[1])+'  0  0.0\n',
-                              '0  0  '+str(self.kp[2])+'  0.0\n',
-                              '%endblock kgrid.MonkhorstPack\n'], name = 'KP')
-        self.write_more_fdf(['BandLinesScale   ReciprocalLatticeVectors'],
-                            name = 'KP')
-        self.write_more_fdf(['%block BandLines'],
-                            name = 'KP')
-        self.write_more_fdf(path, 
-                            name = 'KP')
-        self.write_more_fdf(['%endblock BandLines'],
-                            name = 'KP')
+        return sip_fdf.custom_bandlines(self, path)
     
     def run_tbtrans_in_dir(self,DOS_GF= False, DOS_A=False, DOS_A_ALL=False,ORBITAL_CURRENT=False, Custom = [],
                            use_subprocess = False, wait = True, eta_elecs = None, overwrite_prev=False, _silent = True):
@@ -1150,12 +946,10 @@ class SiP:
         return dq
     
     def create_added_stuff_dic(self):
-        if hasattr(self,'Added_stuff') == False:
-            self.Added_stuff = []
+        return sip_fdf.create_added_stuff_dic(self)
     
     def add_stuff(self, dic):
-        self.create_added_stuff_dic()
-        self.Added_stuff+= [dic]
+        return sip_fdf.add_stuff(self, dic)
     
     def Add_Bounded_Plane(self, O, A, B,  Potential, cut_off, spread = 100.0):
         """
@@ -1168,21 +962,7 @@ class SiP:
             Do this function before writting the fdf files with
             self.fdf
         """
-        self.write_more_fdf(['%block Geometry.Hartree\n',
-                            ' Bounded plane ' + str(Potential)  + ' eV \n',
-                            '  gauss '+str(spread) + ' ' +    str(cut_off  )  + ' Ang\n',
-                            '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
-                            '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
-                            '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
-                            '%endblock Geometry.Hartree\n  ' 
-                            ],
-                            name = 'STRUCT')
-        dic = {'what': 'bounded plane',
-               'Potential':Potential,
-               'vectors': [O,A,B],
-               'spread': spread,
-               'cut_off': cut_off}
-        self.add_stuff(dic)
+        return sip_fdf.Add_Bounded_Plane(self, O, A, B, Potential, cut_off, spread)
     
     def Add_Charged_Bounded_Plane(self, O, A, B,  Charge, cut_off, spread, kind = 'gauss'):
         """
@@ -1197,23 +977,7 @@ class SiP:
             Do this function before writting the fdf files with
             self.fdf
         """
-        string = ['%block Geometry.Charge\n',
-                  ' Bounded plane ' + str(Charge)  + ' \n',
-                  '  '+ kind +' ' + str(spread) + ' ' +    str(cut_off)  + ' Ang\n',
-                  '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
-                  '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
-                  '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
-                  '%endblock Geometry.Charge\n  ' 
-                  ]
-        self.write_more_fdf(string,
-                            name = 'STRUCT')
-        dic = {'what': 'charged bounded plane',
-               'charge':  Charge,
-               'vectors': [O,A,B],
-               'spread':  spread,
-               'cut_off': cut_off,
-               'kind':    kind}
-        self.add_stuff(dic)
+        return sip_fdf.Add_Charged_Bounded_Plane(self, O, A, B, Charge, cut_off, spread, kind)
         
     def Add_Charged_Box(self,O, A, B, C, Charge, Ret = False):
         """
@@ -1229,41 +993,7 @@ class SiP:
             self.fdf
             
         """
-        
-        if O.shape==(3,):
-            string = ['%block Geometry.Charge\n',
-                      ' box ' +  str(Charge) + ' \n',
-                      '    delta\n'
-                      '  ' + str(O[0]) + ' ' + str(O[1]) + ' ' + str(O[2]) + ' Ang\n',
-                      '  ' + str(A[0]) + ' ' + str(A[1]) + ' ' + str(A[2]) + ' Ang\n',
-                      '  ' + str(B[0]) + ' ' + str(B[1]) + ' ' + str(B[2]) + ' Ang\n',
-                      '  ' + str(C[0]) + ' ' + str(C[1]) + ' ' + str(C[2]) + ' Ang\n',
-                      '%endblock Geometry.Charge\n  ' 
-                      ]
-            self.write_more_fdf(string,
-                                name = 'STRUCT')
-            write_this = string
-        elif len(O.shape)==2:
-            write_this = ['%block Geometry.Charge\n']
-            for i,_ in enumerate(Charge):
-                oo = O[i]; aa = A[i]; bb = B[i]; cc = C[i]; charge = Charge[i]
-                write_this += [' box ' +  str(charge) + ' \n',
-                               '    delta\n'
-                               '  ' + str(oo[0]) + ' ' + str(oo[1]) + ' ' + str(oo[2]) + ' Ang\n',
-                               '  ' + str(aa[0]) + ' ' + str(aa[1]) + ' ' + str(aa[2]) + ' Ang\n',
-                               '  ' + str(bb[0]) + ' ' + str(bb[1]) + ' ' + str(bb[2]) + ' Ang\n',
-                               '  ' + str(cc[0]) + ' ' + str(cc[1]) + ' ' + str(cc[2]) + ' Ang\n',
-                              ]
-            
-            write_this += ['%endblock Geometry.Charge\n']
-            self.write_more_fdf(write_this, name = 'STRUCT')
-        
-        dic = {'what': 'charged box',
-               'charge':   Charge,
-               'vectors': [O,A,B,C]}
-        self.add_stuff(dic)
-        if Ret:
-            return write_this
+        return sip_fdf.Add_Charged_Box(self, O, A, B, C, Charge, Ret)
         
     def Add_Charged_Sphere(self, Cent,  R, Ch, cut_off = 5.0):
         """
@@ -1279,34 +1009,7 @@ class SiP:
             self.fdf
             
         """
-        
-        if Cent.shape==(3,):
-            self.write_more_fdf(['%block Geometry.Charge\n',
-                                 ' coords ' +  str(Ch) + ' \n',
-                                 '    gauss '+str(cut_off)+'  '+str(R)+' Ang\n',
-                                 '       1 spheres\n',
-                                 '       ' + str(Cent[0]) + ' ' + str(Cent[1]) + ' ' + str(Cent[2]) + ' Ang\n',
-                                 '%endblock Geometry.Charge\n  ' 
-                                 ],
-                                name = 'STRUCT')
-        else:
-            write_this = ['%block Geometry.Charge\n']
-            for i,_ in enumerate(Cent):
-                cent = Cent[i]; r = R[i]; ch = Ch[i]; 
-                write_this+=[' coords ' +  str(ch) + ' \n',
-                             '    gauss '+str(cut_off)+'  '+str(r)+' Ang\n'
-                             '       1 spheres\n',
-                             '       ' + str(cent[0]) + ' ' + str(cent[1]) + ' ' + str(cent[2]) + ' Ang\n',
-                             ]
-            write_this+=['%endblock Geometry.Charge']
-            self.write_more_fdf(write_this)
-            
-        
-        dic = {'what': 'charged sphere',
-               'charge':   Ch,
-               'cut_off': cut_off,
-               'vectors': [Cent, R]}
-        self.add_stuff(dic)
+        return sip_fdf.Add_Charged_Sphere(self, Cent, R, Ch, cut_off)
     
     def Real_space_SE(self, ax_decimation, ax_integrate,  
                       supercell, eta,Emin, Emax, dE, 
@@ -1859,23 +1562,7 @@ class SiP:
         self.Mulliken_idx = idx
         self.Mulliken_C   = C 
     def write_tb_trans_kp(self):
-        if self.kp_tbtrans == None and hasattr(self, 'manual_tbtrans_kpoint') == False:
-            print('no k-poins for tbtrans!')
-            pass
-        else:
-            name='RUN'   ##self.sl
-            with open(self.dir+'/'+name+'.fdf','r') as f:
-                lines=[i for i in f]
-                f.close()
-            with open(self.dir+'/'+name+'_TBT.fdf','w') as f:
-                for l in lines:
-                    if '%include KP.fdf' in l:
-                        f.write('%include KP_TBT.fdf\n')
-                    elif 'DEFAULT' in l:
-                        pass
-                    
-                    else: f.write(l)
-                f.close()
+        return sip_fdf.write_tb_trans_kp(self)
     
     def gen_basis(self):
         os.chdir(self.dir)
@@ -1904,22 +1591,10 @@ class SiP:
                 error()
     
     def delete_fdf(self,name):
-        os.chdir(self.dir)
-        ossystem('rm ' + name  + '.fdf')
-        os.chdir('..')
+        return sip_fdf.delete_fdf(self, name)
     
     def manual_k_points(self,reduced_k_arr,weights, tbtrans = False):
-        k = reduced_k_arr.copy()
-        assert len(k) == len(weights)
-        L = ['kgrid.File Manual_k.fdf']
-        end = '_TBT' if tbtrans else ''
-        self.delete_fdf('KP'+end)
-        self.write_more_fdf(L, name = 'KP'+end)
-        with open(self.dir + '/' + 'Manual_k.fdf', 'w') as f:
-            nk = len(k)
-            f.write(str(nk) + '\n')
-            for i,ki in enumerate(k):
-                f.write('  ' + str(i) + '  ' + str(ki[0]) + '  ' + str(ki[1]) + '  '+str(ki[2]) + '  ' + str(weights[i]) + '\n')
+        return sip_fdf.manual_k_points(self, reduced_k_arr, weights, tbtrans)
     
     def make_meshed_k_grid(self, kx, ky):
         from scipy.spatial import Delaunay
@@ -1989,12 +1664,7 @@ class SiP:
         self._manual_kgrid_tri = tri
         self.manual_k_points(kgrid, Weights)
     def ideal_cell_charge(self,chargedic,spindeg=True):
-        q = 0.0
-        for s in self.s:
-            q += chargedic[Num2Sym[s]]
-        if spindeg:
-            q *= 0.5
-        return q
+        return sip_fdf.ideal_cell_charge(self, chargedic, spindeg)
     
     def get_contour_from_failed_RSSE(self):
         from time import sleep
@@ -2089,10 +1759,7 @@ class SiP:
             return H, S
     
     def E_field(self,E):
-        self.write_more_fdf(['%block ExternalElectricField\n',
-                              str(E)[1:-1]+' V/Ang\n',
-                             '%endblock ExternalElectricField\n'],
-                              name = 'DEFAULT')
+        return sip_fdf.E_field(self, E)
     
     def is_siesta_done(self):
         try:
@@ -2105,9 +1772,7 @@ class SiP:
             return False
     
     def set_methfessel_paxton(self, N):
-        lines = ['OccupationFunction MP\n',
-                 'OccupationMPOrder '+ str(N) + '\n']
-        self.write_more_fdf(lines, name = 'DEFAULT')
+        return sip_fdf.set_methfessel_paxton(self, N)
     
     def get_labelled_indices(self, condition = None):
         idx  = []
@@ -2137,27 +1802,7 @@ class SiP:
         self.write_more_fdf(['%endblock Geometry.Charge\n'], name = 'STRUCT')
         
     def Dipole_Correction_Vacuum(self, Type,  direction, vacuum_point, Origin = None):
-        self.write_more_fdf(['Slab.DipoleCorrection ' + Type + '\n'], name = 'DEFAULT')
-        
-        if Origin is not None:
-            pos_str = str(Origin[0]) + ' ' + str(Origin[1]) + ' ' + str(Origin[2])
-            self.write_more_fdf(['%block Slab.DipoleCorrection.Origin\n',
-                                 '   ' + pos_str + ' Ang\n',
-                                 '%endblock\n'])
-        
-        self.write_more_fdf([
-                             '%block Slab.DipoleCorrection.Vacuum\n', 
-                             '   direction  ' + str(direction)[1:-1] +    '\n',
-                             '   position   ' + str(vacuum_point)[1:-1] + ' Ang\n',
-                             '%endblock\n'
-                             ]
-                            )
-        
-        dic = {'what':  'dipole correction',
-               'origin':       Origin,
-               'direction':    direction,
-               'vacuum point': vacuum_point}
-        self.add_stuff(dic)
+        return sip_fdf.Dipole_Correction_Vacuum(self, Type, direction, vacuum_point, Origin)
     
     def create_mixed_pseudo_dic(self):
         if hasattr(self,'mixed_pseudo_list') == False:
@@ -2433,25 +2078,12 @@ class SiP:
     def center_cell(self):
         v = np.average(self.UC_idx, axis=0)
         return np.round(v, 0).astype(int)
-        
-        
-    
     def make_pretty(self, ase_pbc = True):
         geom  =self.to_sisl()
         self.pretty_cell()
         self.move(geom.center(what='cell') - geom.center())
         self.Wrap_unit_cell(ase_pbc = ase_pbc)
-    
-    # def wrap_elecs(self):
-    #     pos_new = self.pos_real_space.copy()
-    #     for ie in range(len(self.elecs)):
-    #         elec = self.elecs[ie]
-    #         elec.Wrap_unit_cell()
-    #         dr = elec.pos_real_space - self.pos_real_space[self.elec_inds[ie]]
-    #         pos_new[self.elec_inds[ie]] += dr
-    #     self.set_struct(self.lat, pos_new, self.s)
-        
-    
+
     def Wrap_unit_cell(self,shrink=1e-5,PRINT=False,strict_z=False, cell = None, max_y_tiles = 5,
                        use_ase = True, wrap_elecs = True, wrap_buffer = True, ase_pbc = True, move_elec = True):
         if use_ase:
