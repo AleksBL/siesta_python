@@ -18,7 +18,7 @@ from dftbplus_interface import loadtxt as loadtxt_dftb
 from config import GfModule_extension
 
 if GfModule_extension:
-    from Gf_Module.Gf import read_SE_from_tbtrans
+    from Zandpack.Gf import read_SE_from_tbtrans
 
 from sip_shared import (ld, ossystem, wd, PP_path, sp, tb_trans_exec, B,
                         pdos_exec, gulp_path, gen_basis, mix_ps,
@@ -756,12 +756,14 @@ class SiP:
             
         
         """
+
         if self.solution_method=='diagon':
             print('Running Siesta calculation in Directory: '+self.dir+ '!\n')
         elif self.solution_method=='transiesta':
             print('Running TranSiesta calculation in Directory: '+self.dir+ '!\n')
-        n='RUN'    
-        command = self.mpi+self.siesta_exec+'<'+n+'.fdf '+self.print_no_print+' '+n+'.out'
+        n='RUN'
+        # DO NOT PUT ANYTHING LIKE "siesta < RUN.fdf > RUN.out", this breaks with OMP 5.0 apparently.
+        command = self.mpi+self.siesta_exec+' '+n+'.fdf '+self.print_no_print+' '+n+'.out'
         if use_subprocess:
             if wait:
                 Popen('cd '+self.dir + ' && ' + 
@@ -2714,7 +2716,7 @@ class SiP:
     
     def projection(self, Emin, Emax, sub_orbital = [], eigenstates = True, custom_v = None, return_iG = False, fromwhat='TSHS',
                    nolowdin=False):
-        from Gf_Module.Gf import read_SE_from_tbtrans, Greens_function
+        from Zandpack.Gf import read_SE_from_tbtrans, Greens_function
         from Block_matrices.Block_matrices import Blocksparse2Numpy
         if self.save_SE == False:
             print('You should save the self energies for a proper projection to be done')
